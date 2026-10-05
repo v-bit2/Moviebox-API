@@ -131,6 +131,21 @@ async def _get_player_domain() -> str:
     _domain_cache["expires"] = now + DOMAIN_TTL
     return domain
 
+async def _resolve_detail_path(subject_id: str, detail_path: str | None = None) -> str:
+    """Helper to auto-resolve detailPath / slug if not provided by caller."""
+    if detail_path:
+        return detail_path
+    try:
+        url = f"{API_BASE}/detail?subjectId={subject_id}"
+        data = await _make_request(url)
+        sub = (data.get("data") or {}).get("subject") or {}
+        found_slug = sub.get("detailPath")
+        if found_slug:
+            return found_slug
+    except Exception:
+        pass
+    return subject_id
+
 def _build_player_referer(domain: str, detail_path: str, subject_id: str, se: int, ep: int) -> str:
     return (
         f"{domain}/spa/videoPlayPage/movies/{detail_path}"
@@ -283,10 +298,11 @@ async def get_movie_detail(slug: str):
 @app.get("/api/stream/{subject_id}")
 async def get_stream_sources(
     subject_id: str,
-    detail_path: str,
+    detail_path: str | None = None,
     se: int = 1,
     ep: int = 1,
 ):
+    detail_path = await _resolve_detail_path(subject_id, detail_path)
     domain = await _get_player_domain()
     referer = _build_player_referer(domain, detail_path, subject_id, se, ep)
     play_url = (
@@ -328,10 +344,11 @@ async def get_stream_sources(
 @app.get("/api/stream/{subject_id}/captions")
 async def get_captions(
     subject_id: str,
-    detail_path: str,
+    detail_path: str | None = None,
     se: int = 1,
     ep: int = 1,
 ):
+    detail_path = await _resolve_detail_path(subject_id, detail_path)
     domain = await _get_player_domain()
     referer = _build_player_referer(domain, detail_path, subject_id, se, ep)
     play_url = (
@@ -376,6 +393,74 @@ async def get_captions(
         "captions": captions,
     }
 
+# ─── DOWNLOAD ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/download/{subject_id}")
+async def get_download_links(
+    subject_id: str,
+    detail_path: str | None = None,
+    se: int = 1,
+    ep: int = 1,
+):
+    """Generates direct high-speed download links with file sizes and suggested filenames."""
+    resolved_path = await _resolve_detail_path(subject_id, detail_path)
+
+    title = "Media_File"
+    try:
+        detail_url = f"{API_BASE}/detail?subjectId={subject_id}"
+        det_data = await _make_request(detail_url)
+        sub = (det_data.get("data") or {}).get("subject") or {}
+        if sub.get("title"):
+            title = sub.get("title")
+    except Exception:
+        pass
+
+    clean_title = re.sub(r'[^\w\s-]', '', title).strip().replace(' ', '_')
+
+    domain = await _get_player_domain()
+    referer = _build_player_referer(domain, resolved_path, subject_id, se, ep)
+    play_url = (
+        f"{domain}/wefeed-h5api-bff/subject/play"
+        f"?subjectId={subject_id}&se={se}&ep={ep}&detailPath={resolved_path}"
+    )
+    async with httpx.AsyncClient(follow_redirects=True, timeout=25) as client:
+        resp = await client.get(play_url, headers={**PLAYER_HEADERS, "Referer": referer})
+        try:
+            data = resp.json().get("data", {}) or {}
+        except Exception:
+            raise HTTPException(status_code=502, detail="Player returned non-JSON")
+
+    download_links = []
+    for s in data.get("streams", []):
+        raw_size = int(s.get("size", 0)) if s.get("size") else 0
+        size_str = f"{round(raw_size / (1024 * 1024), 2)} MB" if raw_size else "Unknown"
+        res_label = f"{s.get('resolutions')}p" if s.get("resolutions") else "SD"
+
+        filename = f"{clean_title}_S{se:02d}E{ep:02d}_{res_label}.mp4"
+
+        download_links.append({
+            "quality": res_label,
+            "format": s.get("format", "MP4"),
+            "size_bytes": raw_size,
+            "size": size_str,
+            "duration": s.get("duration"),
+            "filename": filename,
+            "url": s.get("url"),
+        })
+
+    return {
+        "status": "success",
+        "subject_id": subject_id,
+        "title": title,
+        "slug": resolved_path,
+        "se": se,
+        "ep": ep,
+        "total_options": len(download_links),
+        "download_links": download_links,
+        "hls": data.get("hls", []),
+        "dash": data.get("dash", []),
+    }
+
 # ─── HEALTH ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -394,7 +479,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ViralBit Movie Apis - Interactive Testing Platform</title>
+<title>ViralBit Movie Apis - Professional REST Portal & Documentation</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -429,12 +514,12 @@ body {
 .wrapper {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 40px 24px;
+  padding: 30px 24px;
 }
 
 header {
   text-align: center;
-  margin-bottom: 40px;
+  margin-bottom: 30px;
 }
 
 .brand-badge {
@@ -470,26 +555,62 @@ header {
 }
 
 h1 {
-  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  font-size: clamp(2.2rem, 5vw, 3.4rem);
   font-weight: 800;
   letter-spacing: -1.5px;
   background: linear-gradient(135deg, #ffffff 0%, #a2c4fc 50%, var(--accent-cyan) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 
 .subtitle {
   color: var(--text-sub);
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   max-width: 650px;
-  margin: 0 auto;
+  margin: 0 auto 24px;
+}
+
+/* TOP VIEW SWITCHER TABS */
+.main-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 30px;
+}
+
+.tab-btn {
+  background: rgba(13, 20, 36, 0.6);
+  border: 1px solid var(--border-color);
+  color: var(--text-sub);
+  padding: 10px 24px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  transition: all 0.25s ease;
+}
+
+.tab-btn:hover {
+  background: rgba(0, 136, 255, 0.15);
+  color: var(--text-main);
+  border-color: rgba(0, 210, 255, 0.4);
+}
+
+.tab-btn.active {
+  background: linear-gradient(135deg, var(--primary-blue) 0%, #00d2ff 100%);
+  color: #030814;
+  border-color: transparent;
+  box-shadow: var(--neon-glow);
 }
 
 /* MAIN LAYOUT GRID */
 .app-grid {
   display: grid;
-  grid-template-columns: 340px 1fr;
+  grid-template-columns: 320px 1fr;
   gap: 28px;
   align-items: start;
 }
@@ -516,6 +637,9 @@ h1 {
   letter-spacing: 1.2px;
   margin-bottom: 16px;
   padding-left: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .endpoint-list {
@@ -528,7 +652,7 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 11px 14px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid transparent;
@@ -536,7 +660,13 @@ h1 {
   cursor: pointer;
   transition: all 0.25s ease;
   font-weight: 600;
-  font-size: 0.92rem;
+  font-size: 0.9rem;
+}
+
+.ep-item .label-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .ep-item:hover {
@@ -604,7 +734,7 @@ h1 {
   gap: 12px;
   background: var(--bg-input);
   border: 1px solid var(--border-color);
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 12px;
   margin-bottom: 24px;
   font-family: 'JetBrains Mono', monospace;
@@ -663,8 +793,8 @@ select.form-control {
   background: linear-gradient(135deg, var(--primary-blue) 0%, #00d2ff 100%);
   color: #030814;
   font-weight: 800;
-  font-size: 0.98rem;
-  padding: 14px 28px;
+  font-size: 0.95rem;
+  padding: 12px 24px;
   border: none;
   border-radius: 12px;
   cursor: pointer;
@@ -728,6 +858,9 @@ select.form-control {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .btn-sm:hover {
@@ -751,10 +884,10 @@ select.form-control {
 
 .code-wrapper pre { white-space: pre-wrap; word-break: break-all; }
 
-/* MEDIA PREVIEW PLAYER */
+/* MEDIA PREVIEW & DOWNLOADS */
 .media-preview {
   margin-top: 20px;
-  padding: 16px;
+  padding: 18px;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid var(--border-color);
   border-radius: 14px;
@@ -768,9 +901,42 @@ select.form-control {
   background: #000;
 }
 
+.download-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.dl-card {
+  background: rgba(0, 136, 255, 0.1);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  padding: 12px 16px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dl-card .quality { font-weight: 800; color: var(--accent-cyan); font-size: 1rem; }
+.dl-card .size { font-size: 0.8rem; color: var(--text-sub); }
+
+.dl-btn {
+  background: var(--primary-blue);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.8rem;
+  transition: all 0.2s;
+}
+
+.dl-btn:hover { background: var(--accent-cyan); color: #000; }
+
 /* QUICK ITEMS CAROUSEL/GRID */
 .quick-items {
-  margin-top: 20px;
+  margin-top: 14px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: 12px;
@@ -813,10 +979,94 @@ select.form-control {
   color: var(--text-main);
 }
 
+/* DOCUMENTATION TAB STYLING */
+.docs-view {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 36px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+
+.docs-section {
+  margin-bottom: 36px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 28px;
+}
+
+.docs-section:last-child { border-bottom: none; }
+
+.docs-section h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.docs-section p {
+  color: var(--text-sub);
+  line-height: 1.6;
+  font-size: 0.95rem;
+  margin-bottom: 16px;
+}
+
+.doc-endpoint-card {
+  background: rgba(5, 8, 17, 0.7);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.doc-endpoint-card h3 {
+  font-size: 1.15rem;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.param-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 14px;
+  font-size: 0.88rem;
+}
+
+.param-table th, .param-table td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.param-table th {
+  color: var(--accent-cyan);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 1px;
+}
+
+.code-snippet {
+  background: var(--code-bg);
+  border: 1px solid rgba(0, 136, 255, 0.2);
+  border-radius: 10px;
+  padding: 14px 18px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  color: #aed0ff;
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
 footer {
   text-align: center;
-  margin-top: 60px;
-  padding-top: 30px;
+  margin-top: 50px;
+  padding-top: 24px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
   color: var(--text-sub);
   font-size: 0.85rem;
@@ -828,54 +1078,107 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
 <body>
 <div class="wrapper">
   <header>
-    <div class="brand-badge"><span class="pulse"></span> Live API Portal</div>
+    <div class="brand-badge"><span class="pulse"></span> Official API Platform</div>
     <h1>ViralBit Movie Apis</h1>
-    <p class="subtitle">Interactive REST API testing console for MovieBox feeds, catalogs, metadata, streams & captions.</p>
+    <p class="subtitle">High-performance REST API console and integration guide for MovieBox catalogs, streams, captions, and downloads.</p>
   </header>
 
-  <div class="app-grid">
+  <!-- VIEW SWITCHER TABS -->
+  <div class="main-tabs">
+    <button id="tab-console-btn" class="tab-btn active" onclick="switchView('console')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+      API Testing Console
+    </button>
+    <button id="tab-docs-btn" class="tab-btn" onclick="switchView('docs')">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+      API Documentation & Integration Guide
+    </button>
+  </div>
+
+  <!-- CONSOLE VIEW -->
+  <div id="view-console" class="app-grid">
     <!-- LEFT SIDEBAR -->
     <div class="nav-card">
-      <div class="nav-title">API Endpoints</div>
+      <div class="nav-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        API Endpoints
+      </div>
       <div class="endpoint-list">
         <div class="ep-item active" onclick="selectEndpoint('home')">
-          <span>🏠 Home Feed</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            <span>Home Feed</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('movies')">
-          <span>🎬 Movies Catalog</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line></svg>
+            <span>Movies Catalog</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('tv')">
-          <span>📺 TV Series</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect><polyline points="17 2 12 7 7 2"></polyline></svg>
+            <span>TV Series</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('animation')">
-          <span>🐉 Animation</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+            <span>Animation</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('search')">
-          <span>🔍 Full Search</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <span>Full Search</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('suggest')">
-          <span>💡 Autocomplete</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"></path></svg>
+            <span>Autocomplete</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('detail')">
-          <span>📄 Metadata Detail</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+            <span>Metadata Detail</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('stream')">
-          <span>⚡ Stream Sources</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            <span>Stream Sources</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('download')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+            <span>Direct Download</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('captions')">
-          <span>💬 Captions / Subs</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <span>Captions / Subs</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('health')">
-          <span>❤️ System Health</span>
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+            <span>System Health</span>
+          </div>
           <span class="method-tag">GET</span>
         </div>
       </div>
@@ -885,7 +1188,10 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
     <div class="console-card">
       <div class="console-header">
         <div class="endpoint-info">
-          <h2 id="ep-title">🏠 Discover Home Feed</h2>
+          <h2 id="ep-title">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+            Discover Home Feed
+          </h2>
           <p id="ep-desc">Retrieve real-time banners, top trending blocks, and curated categories.</p>
         </div>
         <button class="btn-submit" onclick="executeApi()">
@@ -900,33 +1206,55 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
       </div>
 
       <!-- DYNAMIC INPUT FORM -->
-      <div id="form-container" class="form-grid">
-        <!-- Injected via JavaScript -->
-      </div>
+      <div id="form-container" class="form-grid"></div>
 
-      <!-- QUICK SELECTOR ITEMS (AUTO POPULATED FROM HOME/SEARCH) -->
+      <!-- QUICK SELECTOR ITEMS -->
       <div id="quick-container" style="display:none;">
-        <div class="nav-title" style="padding-left:0; margin-bottom:8px;">Quick Select Item (Click to Auto-fill)</div>
+        <div class="nav-title" style="padding-left:0; margin-bottom:8px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+          Quick Select Item (Click to Auto-fill)
+        </div>
         <div class="quick-items" id="quick-items-list"></div>
       </div>
 
       <!-- MEDIA PLAYER PREVIEW FOR STREAMS -->
       <div id="media-preview-container" class="media-preview" style="display:none;">
-        <div class="nav-title" style="padding-left:0; margin-bottom:10px; color: var(--accent-cyan);">Direct Video Player Stream Preview</div>
+        <div class="nav-title" style="padding-left:0; margin-bottom:10px; color: var(--accent-cyan);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          Direct Video Stream Preview
+        </div>
         <video id="stream-player" controls preload="metadata"></video>
+      </div>
+
+      <!-- DOWNLOAD OPTIONS PREVIEW -->
+      <div id="download-container" class="media-preview" style="display:none;">
+        <div class="nav-title" style="padding-left:0; margin-bottom:10px; color: var(--accent-cyan);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          High-Speed Direct Download Links
+        </div>
+        <div class="download-options" id="dl-cards-list"></div>
       </div>
 
       <!-- RESPONSE CONTAINER -->
       <div class="response-container">
         <div class="response-meta">
           <div style="display:flex; align-items:center; gap:12px;">
-            <span class="nav-title" style="padding:0; margin:0;">Response Output</span>
+            <span class="nav-title" style="padding:0; margin:0;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+              Response Output
+            </span>
             <span id="status-tag" class="status-badge" style="display:none;">200 OK</span>
             <span id="time-tag" style="font-size:0.8rem; color:var(--text-sub); display:none;">120ms</span>
           </div>
           <div class="response-actions">
-            <button class="btn-sm" onclick="copyCurl()">Copy cURL</button>
-            <button class="btn-sm" onclick="copyResponse()">Copy JSON</button>
+            <button class="btn-sm" onclick="copyCurl()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+              Copy cURL
+            </button>
+            <button class="btn-sm" onclick="copyResponse()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect></svg>
+              Copy JSON
+            </button>
           </div>
         </div>
 
@@ -934,6 +1262,129 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
           <pre id="json-output">// Click "Execute Request" above to test this endpoint live.</pre>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- DOCUMENTATION VIEW -->
+  <div id="view-docs" class="docs-view" style="display:none;">
+    <div class="docs-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+        Overview & Integration
+      </h2>
+      <p>Welcome to <strong>ViralBit Movie Apis</strong>. This platform provides an ultra-fast REST API interface for movie and TV series discovery, full-text search, direct stream link resolution, subtitles, and high-speed MP4 video downloads.</p>
+      <p>No client-side API keys or reverse-engineering needed. All requests run with seamless guest session handling and automated player domain resolution.</p>
+    </div>
+
+    <div class="docs-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
+        Authentication & Session Handling
+      </h2>
+      <p>The API handles authentication transparently. On the first request, a temporary guest session token is acquired from the upstream server and refreshed automatically. You can call all endpoints without setting any Authorization headers.</p>
+    </div>
+
+    <div class="docs-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line></svg>
+        Endpoint Reference Catalog
+      </h2>
+
+      <!-- HOME FEED -->
+      <div class="doc-endpoint-card">
+        <h3><span class="method-tag">GET</span> <code>/home</code></h3>
+        <p>Fetches real-time banners, top trending rows, and curated category lists from the home feed.</p>
+        <div class="code-snippet">curl "http://localhost:8000/home"</div>
+      </div>
+
+      <!-- CATALOGS -->
+      <div class="doc-endpoint-card">
+        <h3><span class="method-tag">GET</span> <code>/movies</code>, <code>/tv-series</code>, <code>/animation</code></h3>
+        <p>Returns paginated catalog lists with poster artwork, titles, year, ratings, and IDs.</p>
+        <table class="param-table">
+          <thead>
+            <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>page</code></td><td>int</td><td>1</td><td>Page index (1-based)</td></tr>
+            <tr><td><code>sort</code></td><td>string</td><td>RECOMMEND</td><td>Sort mode: RECOMMEND, NEWEST, RATING</td></tr>
+          </tbody>
+        </table>
+        <div class="code-snippet">curl "http://localhost:8000/movies?page=1&sort=NEWEST"</div>
+      </div>
+
+      <!-- SEARCH -->
+      <div class="doc-endpoint-card">
+        <h3><span class="method-tag">GET</span> <code>/search</code></h3>
+        <p>Full-text movie and series search with robust item normalization.</p>
+        <table class="param-table">
+          <thead>
+            <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>q</code></td><td>string</td><td>Yes</td><td>Search query string</td></tr>
+            <tr><td><code>page</code></td><td>int</td><td>No (1)</td><td>Page index</td></tr>
+          </tbody>
+        </table>
+        <div class="code-snippet">curl "http://localhost:8000/search?q=avatar"</div>
+      </div>
+
+      <!-- STREAM -->
+      <div class="doc-endpoint-card">
+        <h3><span class="method-tag">GET</span> <code>/api/stream/{subject_id}</code></h3>
+        <p>Resolves playable direct MP4 video URLs across 360p, 480p, 720p, and 1080p resolutions.</p>
+        <table class="param-table">
+          <thead>
+            <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>subject_id</code></td><td>string</td><td>Yes</td><td>Unique media ID</td></tr>
+            <tr><td><code>detail_path</code></td><td>string</td><td>No</td><td>Slug (Auto-resolved if omitted)</td></tr>
+            <tr><td><code>se</code></td><td>int</td><td>No (1)</td><td>Season number</td></tr>
+            <tr><td><code>ep</code></td><td>int</td><td>No (1)</td><td>Episode number</td></tr>
+          </tbody>
+        </table>
+        <div class="code-snippet">curl "http://localhost:8000/api/stream/3148392746424091800?se=1&ep=1"</div>
+      </div>
+
+      <!-- DOWNLOAD -->
+      <div class="doc-endpoint-card">
+        <h3><span class="method-tag">GET</span> <code>/api/download/{subject_id}</code></h3>
+        <p>Generates direct download links with calculated file sizes (MB), clean filenames, and duration info.</p>
+        <div class="code-snippet">curl "http://localhost:8000/api/download/3148392746424091800"</div>
+      </div>
+
+      <!-- CAPTIONS -->
+      <div class="doc-endpoint-card">
+        <h3><span class="method-tag">GET</span> <code>/api/stream/{subject_id}/captions</code></h3>
+        <p>Returns available SRT/VTT subtitle tracks for the selected movie or episode.</p>
+        <div class="code-snippet">curl "http://localhost:8000/api/stream/3148392746424091800/captions"</div>
+      </div>
+    </div>
+
+    <div class="docs-section">
+      <h2>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+        Code Integration Examples
+      </h2>
+      <p><strong>Python (Async with httpx)</strong></p>
+      <div class="code-snippet">import httpx, asyncio
+
+async def fetch_movie_streams(subject_id):
+    async with httpx.AsyncClient() as client:
+        res = await client.get(f"http://localhost:8000/api/stream/{subject_id}")
+        return res.json()
+
+data = asyncio.run(fetch_movie_streams("3148392746424091800"))
+print("Sources:", data["sources"])</div>
+
+      <p style="margin-top:16px;"><strong>JavaScript (Node / Browser fetch)</strong></p>
+      <div class="code-snippet">async function downloadMovie(subjectId) {
+  const response = await fetch(`http://localhost:8000/api/download/${subjectId}`);
+  const data = await response.json();
+  console.log("Download Links:", data.download_links);
+}
+downloadMovie("3148392746424091800");</div>
     </div>
   </div>
 
@@ -948,13 +1399,13 @@ let lastResponseData = null;
 
 const ENDPOINTS = {
   home: {
-    title: '🏠 Discover Home Feed',
+    title: 'Discover Home Feed',
     desc: 'Retrieve real-time banners, top trending blocks, and curated categories.',
     path: '/home',
     params: []
   },
   movies: {
-    title: '🎬 Movie Catalog',
+    title: 'Movie Catalog',
     desc: 'Browse paginated catalog for movies with sorting support.',
     path: '/movies',
     params: [
@@ -963,7 +1414,7 @@ const ENDPOINTS = {
     ]
   },
   tv: {
-    title: '📺 TV Series Catalog',
+    title: 'TV Series Catalog',
     desc: 'Browse paginated catalog for TV shows.',
     path: '/tv-series',
     params: [
@@ -972,7 +1423,7 @@ const ENDPOINTS = {
     ]
   },
   animation: {
-    title: '🐉 Animation Catalog',
+    title: 'Animation Catalog',
     desc: 'Browse paginated catalog for animated series and movies.',
     path: '/animation',
     params: [
@@ -981,16 +1432,16 @@ const ENDPOINTS = {
     ]
   },
   search: {
-    title: '🔍 Full-Text Search',
+    title: 'Full-Text Search',
     desc: 'High-precision search returning matching titles, slugs, and poster URLs.',
     path: '/search',
     params: [
-      { name: 'q', label: 'Search Query', type: 'text', value: 'matrix' },
+      { name: 'q', label: 'Search Query', type: 'text', value: 'avatar' },
       { name: 'page', label: 'Page Number', type: 'number', value: '1' }
     ]
   },
   suggest: {
-    title: '💡 Autocomplete Suggestions',
+    title: 'Autocomplete Suggestions',
     desc: 'Fast light-weight type-ahead search suggestions.',
     path: '/search/suggest',
     params: [
@@ -998,7 +1449,7 @@ const ENDPOINTS = {
     ]
   },
   detail: {
-    title: '📄 Full Metadata Tree',
+    title: 'Full Metadata Tree',
     desc: 'Deep metadata inspection for seasons, episodes, languages, and artwork.',
     path: '/detail/{slug}',
     params: [
@@ -1006,34 +1457,52 @@ const ENDPOINTS = {
     ]
   },
   stream: {
-    title: '⚡ Stream Source Resolver',
+    title: 'Stream Source Resolver',
     desc: 'Extract direct MP4 video URLs, HLS/DASH links across resolutions.',
     path: '/api/stream/{subject_id}',
     params: [
       { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
-      { name: 'detail_path', label: 'Detail Path / Slug', type: 'text', value: 'coven-academy-UQietRFFzK3' },
+      { name: 'detail_path', label: 'Detail Path / Slug (Optional)', type: 'text', value: '' },
+      { name: 'se', label: 'Season Number', type: 'number', value: '1' },
+      { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
+    ]
+  },
+  download: {
+    title: 'Direct High-Speed Download Links',
+    desc: 'Generate direct MP4 download links with size calculation and filenames.',
+    path: '/api/download/{subject_id}',
+    params: [
+      { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
+      { name: 'detail_path', label: 'Detail Path / Slug (Optional)', type: 'text', value: '' },
       { name: 'se', label: 'Season Number', type: 'number', value: '1' },
       { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
     ]
   },
   captions: {
-    title: '💬 Subtitle & Captions',
+    title: 'Subtitle & Captions',
     desc: 'Fetch full caption track list in SRT/VTT for specific episode.',
     path: '/api/stream/{subject_id}/captions',
     params: [
       { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
-      { name: 'detail_path', label: 'Detail Path / Slug', type: 'text', value: 'coven-academy-UQietRFFzK3' },
+      { name: 'detail_path', label: 'Detail Path / Slug (Optional)', type: 'text', value: '' },
       { name: 'se', label: 'Season Number', type: 'number', value: '1' },
       { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
     ]
   },
   health: {
-    title: '❤️ System Health & Cache State',
+    title: 'System Health & Cache State',
     desc: 'Check API service liveness, guest token cache status, and player domain TTL.',
     path: '/health',
     params: []
   }
 };
+
+function switchView(view) {
+  document.getElementById('view-console').style.display = view === 'console' ? 'grid' : 'none';
+  document.getElementById('view-docs').style.display = view === 'docs' ? 'block' : 'none';
+  document.getElementById('tab-console-btn').className = `tab-btn ${view === 'console' ? 'active' : ''}`;
+  document.getElementById('tab-docs-btn').className = `tab-btn ${view === 'docs' ? 'active' : ''}`;
+}
 
 function selectEndpoint(key) {
   currentEp = key;
@@ -1048,8 +1517,9 @@ function selectEndpoint(key) {
   renderForm(config.params);
   updateUrlDisplay();
 
-  // Reset media player if switching endpoints
+  // Reset previews
   document.getElementById('media-preview-container').style.display = 'none';
+  document.getElementById('download-container').style.display = 'none';
   const player = document.getElementById('stream-player');
   player.pause();
   player.src = '';
@@ -1129,12 +1599,14 @@ async function executeApi() {
   const statusTag = document.getElementById('status-tag');
   const timeTag = document.getElementById('time-tag');
   const mediaContainer = document.getElementById('media-preview-container');
+  const dlContainer = document.getElementById('download-container');
   const player = document.getElementById('stream-player');
 
   output.innerText = '// Fetching live response...';
   statusTag.style.display = 'none';
   timeTag.style.display = 'none';
   mediaContainer.style.display = 'none';
+  dlContainer.style.display = 'none';
   player.pause();
   player.src = '';
 
@@ -1155,12 +1627,12 @@ async function executeApi() {
 
     output.innerText = JSON.stringify(data, null, 2);
 
-    // Populate quick picker if items returned
+    // Populate quick picker
     if (data.items || (data.sections && data.sections[0])) {
       extractQuickItems(data);
     }
 
-    // Direct preview player if sources are present
+    // Video preview for stream
     if (currentEp === 'stream' && data.sources && data.sources.length > 0) {
       const playable = data.sources.find(s => s.url);
       if (playable) {
@@ -1168,12 +1640,38 @@ async function executeApi() {
         mediaContainer.style.display = 'block';
       }
     }
+
+    // Download cards for download endpoint
+    if (currentEp === 'download' && data.download_links && data.download_links.length > 0) {
+      renderDownloadCards(data.download_links);
+    }
   } catch (err) {
     statusTag.innerText = 'FETCH ERROR';
     statusTag.className = 'status-badge error';
     statusTag.style.display = 'inline-block';
     output.innerText = `// Request Failed: ${err.message}`;
   }
+}
+
+function renderDownloadCards(links) {
+  const container = document.getElementById('dl-cards-list');
+  const dlContainer = document.getElementById('download-container');
+  container.innerHTML = '';
+
+  links.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'dl-card';
+    card.innerHTML = `
+      <div>
+        <div class="quality">${item.quality} MP4</div>
+        <div class="size">${item.size}</div>
+      </div>
+      <a href="${item.url}" target="_blank" download="${item.filename}" class="dl-btn">Download</a>
+    `;
+    container.appendChild(card);
+  });
+
+  dlContainer.style.display = 'block';
 }
 
 function extractQuickItems(data) {
@@ -1215,7 +1713,7 @@ function extractQuickItems(data) {
 }
 
 function fillItemDetails(slug, subjectId) {
-  if (currentEp !== 'detail' && currentEp !== 'stream' && currentEp !== 'captions') {
+  if (currentEp !== 'detail' && currentEp !== 'stream' && currentEp !== 'download' && currentEp !== 'captions') {
     selectEndpoint('detail');
   }
 

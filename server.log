@@ -1,0 +1,17 @@
+INFO:     Started server process [97714]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:35686 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35692 - "GET /home HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43050 - "GET /movies HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43058 - "GET /tv-series HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43074 - "GET /animation HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43082 - "GET /search?q=matrix HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43092 - "GET /search/suggest?q=break HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43106 - "GET /detail/coven-academy-UQietRFFzK3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43118 - "GET /api/stream/3148392746424091800?detail_path=coven-academy-UQietRFFzK3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43132 - "GET /api/stream/3148392746424091800/captions?detail_path=coven-academy-UQietRFFzK3 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43134 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34488 - "GET /api/download/3148392746424091800 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55378 - "GET / HTTP/1.1" 200 OK
