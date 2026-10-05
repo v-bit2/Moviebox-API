@@ -2,11 +2,11 @@
   <img src="https://h5-static.aoneroom.com/ssrStatic/mbOfficial/public/_nuxt/web-logo.apJjVir2.svg" alt="LOGO" width="200"/>
 </p>
 
-# MovieBox API Pro
+# ViralBit Movie Apis
 
-A pure REST API wrapper around [moviebox.ph](https://moviebox.ph).
+A high-performance REST API portal and wrapper around [moviebox.ph](https://moviebox.ph).
 
-No scraping. No HTML parsing. No headless browser. It talks the exact same private JSON API the moviebox web player talks — `h5-api.aoneroom.com/wefeed-h5api-bff` — and re-exposes it as a clean, self-hosted REST surface.
+No scraping. No HTML parsing. No headless browser. It talks the exact same private JSON API the moviebox web player talks — `h5-api.aoneroom.com/wefeed-h5api-bff` — and re-exposes it as a clean, self-hosted REST surface paired with an interactive Black & Blue testing dashboard.
 
 Built for people who want to wire moviebox into their own apps, scripts, bots, dashboards, or media servers without reverse-engineering the network tab every time the site ships an update.
 
@@ -14,9 +14,10 @@ Built for people who want to wire moviebox into their own apps, scripts, bots, d
 
 ## What it does
 
+- **Interactive API Testing Console** — Built-in modern Black & Blue web portal for live API exploration, quick item selection, cURL generator, JSON syntax highlighting, and media player preview.
 - **Discovery** — banners, featured blocks, and category rows from the moviebox home feed
 - **Catalog** — paginated movies, TV series, and animation
-- **Search** — full search + autocomplete suggestions
+- **Search & Autocomplete** — robust full-text search + autocomplete suggestions (handles both flat and nested subject response payloads)
 - **Metadata** — full detail tree for any subject (episodes, seasons, languages, artwork)
 - **Streams** — direct MP4 sources per resolution, plus HLS and DASH manifests
 - **Subtitles** — full caption list per episode / movie
@@ -39,7 +40,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Server boots on `http://localhost:8000`. Open it in a browser and you get the dashboard, which lists every endpoint with a one-click test button.
+Server boots on `http://localhost:8000`. Open it in a browser and you get the **ViralBit Movie Apis** interactive dashboard, featuring a full REST API testing console with parameter inputs, live request execution, and an embedded stream player.
 
 For dev with autoreload:
 
