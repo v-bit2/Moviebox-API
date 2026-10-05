@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 app = FastAPI(
-    title="MovieBox API Pro",
+    title="ViralBit Movie Apis",
     description="Full Pure REST API for moviebox.ph — Zero Scraping",
     version="2.2.0",
 )
@@ -116,6 +116,8 @@ async def _make_request(
             return resp.json()
         except HTTPException:
             raise
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail="Upstream request timed out")
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Request failed: {e}")
 
@@ -238,7 +240,7 @@ async def get_search_suggestions(q: str = Query(..., min_length=1)):
     raw = inner.get("items") or inner.get("list") or []
     suggestions = []
     for item in raw:
-        sub = item.get("subject") or {}
+        sub = item.get("subject") if isinstance(item.get("subject"), dict) else {}
         suggestions.append({
             "title": sub.get("title") or item.get("word") or item.get("title"),
             "slug": sub.get("detailPath") or item.get("detailPath"),
@@ -252,15 +254,19 @@ async def search(q: str = Query(..., min_length=1), page: int = 1):
     data = await _make_request(url, method="POST", payload={"keyword": q, "page": page, "perPage": 20})
     inner = data.get("data", {}) or {}
     raw = inner.get("items") or inner.get("list") or []
-    items = [
-        {
-            "name": sub.get("title"),
-            "poster_url": (sub.get("cover") or {}).get("url"),
-            "slug": sub.get("detailPath"),
-            "subject_id": sub.get("subjectId"),
-        }
-        for sub in raw
-    ]
+    items = []
+    for item in raw:
+        sub = item.get("subject") if isinstance(item.get("subject"), dict) else item
+        cover = sub.get("cover") or item.get("cover") or {}
+        items.append({
+            "name": sub.get("title") or item.get("title"),
+            "poster_url": cover.get("url") if isinstance(cover, dict) else None,
+            "slug": sub.get("detailPath") or item.get("detailPath"),
+            "subject_id": sub.get("subjectId") or item.get("subjectId"),
+            "badge": sub.get("corner") or item.get("corner"),
+            "rating": sub.get("imdbRatingValue") or item.get("imdbRatingValue"),
+            "year": (sub.get("releaseDate") or item.get("releaseDate") or "")[:4] or None,
+        })
     pager = inner.get("pager", {}) or {}
     total = pager.get("totalCount") or inner.get("total") or len(items)
     return {"query": q, "page": page, "total": total, "items": items}
@@ -388,52 +394,858 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MovieBox Pure API | Pro Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<title>ViralBit Movie Apis - Interactive Testing Platform</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
-:root{--primary:#ff3d71;--secondary:#3366ff;--accent:#00f2ff;--bg:#07080c;--card-bg:rgba(255,255,255,0.03);--glass:rgba(255,255,255,0.06);--text:#fff}
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden;min-height:100vh;background-image:radial-gradient(circle at 10% 10%,rgba(255,61,113,0.12) 0%,transparent 40%),radial-gradient(circle at 90% 90%,rgba(51,102,255,0.12) 0%,transparent 40%)}
-.container{max-width:1200px;margin:0 auto;padding:60px 24px}
-header{text-align:center;margin-bottom:80px;animation:fadeInDown 1s ease-out}
-@keyframes fadeInDown{from{opacity:0;transform:translateY(-30px)}to{opacity:1;transform:translateY(0)}}
-h1{font-size:clamp(2.5rem,8vw,4rem);font-weight:800;background:linear-gradient(135deg,#fff 0%,#aaa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:15px;letter-spacing:-2px}
-.badge{background:linear-gradient(90deg,var(--primary),var(--secondary));padding:8px 18px;border-radius:40px;font-size:.85rem;font-weight:700;display:inline-block;margin-bottom:25px;text-transform:uppercase;letter-spacing:1px;box-shadow:0 10px 30px rgba(255,61,113,0.3)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:30px;margin-top:20px}
-.card{background:var(--card-bg);border:1px solid var(--glass);border-radius:28px;padding:35px;transition:all .4s cubic-bezier(.175,.885,.32,1.275);backdrop-filter:blur(12px);display:flex;flex-direction:column}
-@media(hover:hover){.card:hover{transform:translateY(-12px) scale(1.02);border-color:rgba(255,255,255,.2);box-shadow:0 30px 60px rgba(0,0,0,.5)}}
-.card-title{font-size:1.5rem;font-weight:700;margin-bottom:18px;display:flex;align-items:center;gap:12px}
-.card-title i{width:32px;height:32px;background:rgba(255,255,255,0.05);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:1rem;color:var(--accent);font-style:normal}
-.card-desc{color:#9ea3ac;font-size:1rem;line-height:1.6;margin-bottom:25px;flex-grow:1}
-.endpoint{font-family:'JetBrains Mono',monospace;background:rgba(0,0,0,.4);padding:14px;border-radius:14px;font-size:.85rem;color:var(--accent);border:1px solid rgba(0,242,255,.15);margin-bottom:25px;word-break:break-all;position:relative}
-.endpoint::after{content:'GET';position:absolute;right:14px;top:14px;font-size:.65rem;font-weight:800;color:rgba(255,255,255,.3)}
-.btn{display:flex;align-items:center;justify-content:center;padding:16px;background:#fff;color:#000;text-decoration:none;border-radius:16px;font-weight:700;font-size:.95rem;transition:all .3s}
-.btn:hover{background:var(--primary);color:#fff;transform:translateY(-2px);box-shadow:0 10px 25px rgba(255,61,113,.4)}
-footer{text-align:center;padding:80px 0 40px;animation:fadeIn 2s ease}
-@keyframes fadeIn{from{opacity:0}to{opacity:1}}
-.dev-tag{font-weight:800;color:#666;letter-spacing:3px;text-transform:uppercase;font-size:.75rem;border:1px solid #222;padding:12px 30px;border-radius:50px;display:inline-block;background:rgba(255,255,255,.01);transition:all .3s}
-.dev-tag:hover{color:var(--text);border-color:var(--primary);letter-spacing:5px}
-@media(max-width:480px){.container{padding:40px 16px}.card{padding:25px}h1{margin-bottom:10px}}
+:root {
+  --bg-dark: #070a12;
+  --bg-card: rgba(13, 20, 36, 0.75);
+  --bg-input: #0a1122;
+  --border-color: rgba(0, 136, 255, 0.2);
+  --border-glow: rgba(0, 210, 255, 0.5);
+  --primary-blue: #0088ff;
+  --accent-cyan: #00d2ff;
+  --neon-glow: 0 0 20px rgba(0, 210, 255, 0.35);
+  --text-main: #f0f4fc;
+  --text-sub: #8ca2c0;
+  --code-bg: #050811;
+  --success: #00e676;
+  --error: #ff3366;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  min-height: 100vh;
+  background-image:
+    radial-gradient(circle at 15% 15%, rgba(0, 136, 255, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(0, 210, 255, 0.12) 0%, transparent 45%),
+    linear-gradient(to bottom, #05070d, #090e1a);
+  background-attachment: fixed;
+}
+
+.wrapper {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 24px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 40px;
+}
+
+.brand-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(0, 136, 255, 0.1);
+  border: 1px solid rgba(0, 210, 255, 0.4);
+  padding: 6px 18px;
+  border-radius: 30px;
+  color: var(--accent-cyan);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  box-shadow: var(--neon-glow);
+  margin-bottom: 16px;
+}
+
+.brand-badge .pulse {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-cyan);
+  border-radius: 50%;
+  box-shadow: 0 0 10px var(--accent-cyan);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+h1 {
+  font-size: clamp(2.2rem, 5vw, 3.5rem);
+  font-weight: 800;
+  letter-spacing: -1.5px;
+  background: linear-gradient(135deg, #ffffff 0%, #a2c4fc 50%, var(--accent-cyan) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 12px;
+}
+
+.subtitle {
+  color: var(--text-sub);
+  font-size: 1.1rem;
+  max-width: 650px;
+  margin: 0 auto;
+}
+
+/* MAIN LAYOUT GRID */
+.app-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 28px;
+  align-items: start;
+}
+
+@media (max-width: 992px) {
+  .app-grid { grid-template-columns: 1fr; }
+}
+
+/* SIDEBAR ENDPOINT NAV */
+.nav-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 20px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+
+.nav-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-sub);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  margin-bottom: 16px;
+  padding-left: 8px;
+}
+
+.endpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ep-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid transparent;
+  color: var(--text-main);
+  cursor: pointer;
+  transition: all 0.25s ease;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.ep-item:hover {
+  background: rgba(0, 136, 255, 0.08);
+  border-color: rgba(0, 210, 255, 0.25);
+  transform: translateX(3px);
+}
+
+.ep-item.active {
+  background: linear-gradient(90deg, rgba(0, 136, 255, 0.2) 0%, rgba(0, 210, 255, 0.05) 100%);
+  border-color: var(--accent-cyan);
+  box-shadow: inset 0 0 15px rgba(0, 210, 255, 0.15);
+  color: #fff;
+}
+
+.method-tag {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.7rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(0, 210, 255, 0.15);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+}
+
+/* TESTING CONSOLE AREA */
+.console-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  padding: 28px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+
+.console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 20px;
+  margin-bottom: 24px;
+}
+
+.endpoint-info h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.endpoint-info p {
+  color: var(--text-sub);
+  font-size: 0.9rem;
+  margin-top: 4px;
+}
+
+.url-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  border-radius: 12px;
+  margin-bottom: 24px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+}
+
+.url-path {
+  color: var(--accent-cyan);
+  flex: 1;
+  word-break: break-all;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-sub);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.form-control {
+  background: var(--bg-input);
+  border: 1px solid rgba(0, 136, 255, 0.25);
+  border-radius: 10px;
+  padding: 12px 16px;
+  color: var(--text-main);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.95rem;
+  outline: none;
+  transition: all 0.25s;
+}
+
+.form-control:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: var(--neon-glow);
+}
+
+select.form-control {
+  cursor: pointer;
+}
+
+.btn-submit {
+  background: linear-gradient(135deg, var(--primary-blue) 0%, #00d2ff 100%);
+  color: #030814;
+  font-weight: 800;
+  font-size: 0.98rem;
+  padding: 14px 28px;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 8px 25px rgba(0, 136, 255, 0.35);
+}
+
+.btn-submit:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0, 210, 255, 0.5);
+  color: #000;
+}
+
+/* RESPONSE BOX */
+.response-container {
+  margin-top: 28px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 24px;
+}
+
+.response-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.status-badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(0, 230, 118, 0.15);
+  color: var(--success);
+  border: 1px solid rgba(0, 230, 118, 0.3);
+}
+
+.status-badge.error {
+  background: rgba(255, 51, 102, 0.15);
+  color: var(--error);
+  border-color: rgba(255, 51, 102, 0.3);
+}
+
+.response-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-sm {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--text-main);
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-sm:hover {
+  background: rgba(0, 210, 255, 0.2);
+  border-color: var(--accent-cyan);
+}
+
+.code-wrapper {
+  position: relative;
+  background: var(--code-bg);
+  border: 1px solid rgba(0, 136, 255, 0.2);
+  border-radius: 12px;
+  padding: 18px;
+  max-height: 480px;
+  overflow-y: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #aed0ff;
+}
+
+.code-wrapper pre { white-space: pre-wrap; word-break: break-all; }
+
+/* MEDIA PREVIEW PLAYER */
+.media-preview {
+  margin-top: 20px;
+  padding: 16px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+}
+
+.media-preview video {
+  width: 100%;
+  max-height: 400px;
+  border-radius: 10px;
+  outline: none;
+  background: #000;
+}
+
+/* QUICK ITEMS CAROUSEL/GRID */
+.quick-items {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 12px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.quick-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.quick-card:hover {
+  border-color: var(--accent-cyan);
+  transform: translateY(-2px);
+  background: rgba(0, 136, 255, 0.1);
+}
+
+.quick-card img {
+  width: 100%;
+  aspect-ratio: 2/3;
+  object-fit: cover;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: #0d1424;
+}
+
+.quick-card .title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-main);
+}
+
+footer {
+  text-align: center;
+  margin-top: 60px;
+  padding-top: 30px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--text-sub);
+  font-size: 0.85rem;
+}
+
+footer span { color: var(--accent-cyan); font-weight: 700; }
 </style>
 </head>
 <body>
-<div class="container">
-<header>
-<div class="badge">Enterprise API Solution</div>
-<h1>MovieBox Pro</h1>
-<p style="color:#667;font-size:1.25rem;font-weight:300">State-of-the-Art Pure API Architecture</p>
-</header>
-<div class="grid">
-<div class="card"><div class="card-title"><i>🏠</i> Discover Home</div><p class="card-desc">The ultimate window into MovieBox. Headlines, recommended content, and trending blocks updated in real-time.</p><div class="endpoint">/home</div><a href="/home" target="_blank" class="btn">Launch API</a></div>
-<div class="card"><div class="card-title"><i>🔍</i> Smart Search</div><p class="card-desc">High-precision search engine results. Returns titles, posters, and slugs for lightning-fast matching.</p><div class="endpoint">/search?q=Attack on Titan</div><a href="/search?q=Attack on Titan" target="_blank" class="btn">Test Search</a></div>
-<div class="card"><div class="card-title"><i>🆔</i> Metadata A-Z</div><p class="card-desc">Deep-dive into any subject. Episodes, seasons, languages, and full high-resolution metadata trees.</p><div class="endpoint">/detail/{slug}</div><a href="/detail/attack-on-titan-hindi-kGWQOIx0d4" target="_blank" class="btn">Fetch Specs</a></div>
-<div class="card"><div class="card-title"><i>🎬</i> Stream Engine</div><p class="card-desc">Dynamic domain discovery and direct MP4 extraction. Supports multiple resolutions and qualities.</p><div class="endpoint">/api/stream/{subject_id}</div><a href="/api/stream/56988683026712168?detail_path=attack-on-titan-hindi-kGWQOIx0d4" target="_blank" class="btn">Get Player Link</a></div>
-<div class="card"><div class="card-title"><i>📦</i> Catalog Filters</div><p class="card-desc">Paginated collections for all genres. Movies, TV shows, and Animations filtered by professional criteria.</p><div class="endpoint">/tv-series?page=2</div><a href="/tv-series?page=2" target="_blank" class="btn">Test Page 2</a></div>
-<div class="card"><div class="card-title"><i>💬</i> Subtitle Suite</div><p class="card-desc">Access to the complete SRT/VTT global database for all streaming subjects.</p><div class="endpoint">/api/stream/{id}/captions</div><a href="/api/stream/6207982430134357800/captions?detail_path=breaking-bad-ej6Bp0MCAo7" target="_blank" class="btn">Retrieve Subs</a></div>
-<div class="card"><div class="card-title"><i>❤️</i> Health</div><p class="card-desc">Service liveness. Token cache state and player-domain TTL.</p><div class="endpoint">/health</div><a href="/health" target="_blank" class="btn">Check</a></div>
+<div class="wrapper">
+  <header>
+    <div class="brand-badge"><span class="pulse"></span> Live API Portal</div>
+    <h1>ViralBit Movie Apis</h1>
+    <p class="subtitle">Interactive REST API testing console for MovieBox feeds, catalogs, metadata, streams & captions.</p>
+  </header>
+
+  <div class="app-grid">
+    <!-- LEFT SIDEBAR -->
+    <div class="nav-card">
+      <div class="nav-title">API Endpoints</div>
+      <div class="endpoint-list">
+        <div class="ep-item active" onclick="selectEndpoint('home')">
+          <span>🏠 Home Feed</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('movies')">
+          <span>🎬 Movies Catalog</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('tv')">
+          <span>📺 TV Series</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('animation')">
+          <span>🐉 Animation</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('search')">
+          <span>🔍 Full Search</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('suggest')">
+          <span>💡 Autocomplete</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('detail')">
+          <span>📄 Metadata Detail</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('stream')">
+          <span>⚡ Stream Sources</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('captions')">
+          <span>💬 Captions / Subs</span>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('health')">
+          <span>❤️ System Health</span>
+          <span class="method-tag">GET</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN CONSOLE -->
+    <div class="console-card">
+      <div class="console-header">
+        <div class="endpoint-info">
+          <h2 id="ep-title">🏠 Discover Home Feed</h2>
+          <p id="ep-desc">Retrieve real-time banners, top trending blocks, and curated categories.</p>
+        </div>
+        <button class="btn-submit" onclick="executeApi()">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          Execute Request
+        </button>
+      </div>
+
+      <div class="url-bar">
+        <span class="method-tag">GET</span>
+        <span class="url-path" id="url-display">/home</span>
+      </div>
+
+      <!-- DYNAMIC INPUT FORM -->
+      <div id="form-container" class="form-grid">
+        <!-- Injected via JavaScript -->
+      </div>
+
+      <!-- QUICK SELECTOR ITEMS (AUTO POPULATED FROM HOME/SEARCH) -->
+      <div id="quick-container" style="display:none;">
+        <div class="nav-title" style="padding-left:0; margin-bottom:8px;">Quick Select Item (Click to Auto-fill)</div>
+        <div class="quick-items" id="quick-items-list"></div>
+      </div>
+
+      <!-- MEDIA PLAYER PREVIEW FOR STREAMS -->
+      <div id="media-preview-container" class="media-preview" style="display:none;">
+        <div class="nav-title" style="padding-left:0; margin-bottom:10px; color: var(--accent-cyan);">Direct Video Player Stream Preview</div>
+        <video id="stream-player" controls preload="metadata"></video>
+      </div>
+
+      <!-- RESPONSE CONTAINER -->
+      <div class="response-container">
+        <div class="response-meta">
+          <div style="display:flex; align-items:center; gap:12px;">
+            <span class="nav-title" style="padding:0; margin:0;">Response Output</span>
+            <span id="status-tag" class="status-badge" style="display:none;">200 OK</span>
+            <span id="time-tag" style="font-size:0.8rem; color:var(--text-sub); display:none;">120ms</span>
+          </div>
+          <div class="response-actions">
+            <button class="btn-sm" onclick="copyCurl()">Copy cURL</button>
+            <button class="btn-sm" onclick="copyResponse()">Copy JSON</button>
+          </div>
+        </div>
+
+        <div class="code-wrapper">
+          <pre id="json-output">// Click "Execute Request" above to test this endpoint live.</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Powering Next-Gen Media Discovery &mdash; <span>ViralBit Movie Apis</span>
+  </footer>
 </div>
-<footer><div class="dev-tag">Developer: Walter</div></footer>
-</div>
+
+<script>
+let currentEp = 'home';
+let lastResponseData = null;
+
+const ENDPOINTS = {
+  home: {
+    title: '🏠 Discover Home Feed',
+    desc: 'Retrieve real-time banners, top trending blocks, and curated categories.',
+    path: '/home',
+    params: []
+  },
+  movies: {
+    title: '🎬 Movie Catalog',
+    desc: 'Browse paginated catalog for movies with sorting support.',
+    path: '/movies',
+    params: [
+      { name: 'page', label: 'Page Number', type: 'number', value: '1' },
+      { name: 'sort', label: 'Sort By', type: 'select', value: 'RECOMMEND', options: ['RECOMMEND', 'NEWEST', 'RATING'] }
+    ]
+  },
+  tv: {
+    title: '📺 TV Series Catalog',
+    desc: 'Browse paginated catalog for TV shows.',
+    path: '/tv-series',
+    params: [
+      { name: 'page', label: 'Page Number', type: 'number', value: '1' },
+      { name: 'sort', label: 'Sort By', type: 'select', value: 'RECOMMEND', options: ['RECOMMEND', 'NEWEST', 'RATING'] }
+    ]
+  },
+  animation: {
+    title: '🐉 Animation Catalog',
+    desc: 'Browse paginated catalog for animated series and movies.',
+    path: '/animation',
+    params: [
+      { name: 'page', label: 'Page Number', type: 'number', value: '1' },
+      { name: 'sort', label: 'Sort By', type: 'select', value: 'RECOMMEND', options: ['RECOMMEND', 'NEWEST', 'RATING'] }
+    ]
+  },
+  search: {
+    title: '🔍 Full-Text Search',
+    desc: 'High-precision search returning matching titles, slugs, and poster URLs.',
+    path: '/search',
+    params: [
+      { name: 'q', label: 'Search Query', type: 'text', value: 'matrix' },
+      { name: 'page', label: 'Page Number', type: 'number', value: '1' }
+    ]
+  },
+  suggest: {
+    title: '💡 Autocomplete Suggestions',
+    desc: 'Fast light-weight type-ahead search suggestions.',
+    path: '/search/suggest',
+    params: [
+      { name: 'q', label: 'Keyword', type: 'text', value: 'break' }
+    ]
+  },
+  detail: {
+    title: '📄 Full Metadata Tree',
+    desc: 'Deep metadata inspection for seasons, episodes, languages, and artwork.',
+    path: '/detail/{slug}',
+    params: [
+      { name: 'slug', label: 'Subject Slug', type: 'text', value: 'coven-academy-UQietRFFzK3' }
+    ]
+  },
+  stream: {
+    title: '⚡ Stream Source Resolver',
+    desc: 'Extract direct MP4 video URLs, HLS/DASH links across resolutions.',
+    path: '/api/stream/{subject_id}',
+    params: [
+      { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
+      { name: 'detail_path', label: 'Detail Path / Slug', type: 'text', value: 'coven-academy-UQietRFFzK3' },
+      { name: 'se', label: 'Season Number', type: 'number', value: '1' },
+      { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
+    ]
+  },
+  captions: {
+    title: '💬 Subtitle & Captions',
+    desc: 'Fetch full caption track list in SRT/VTT for specific episode.',
+    path: '/api/stream/{subject_id}/captions',
+    params: [
+      { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
+      { name: 'detail_path', label: 'Detail Path / Slug', type: 'text', value: 'coven-academy-UQietRFFzK3' },
+      { name: 'se', label: 'Season Number', type: 'number', value: '1' },
+      { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
+    ]
+  },
+  health: {
+    title: '❤️ System Health & Cache State',
+    desc: 'Check API service liveness, guest token cache status, and player domain TTL.',
+    path: '/health',
+    params: []
+  }
+};
+
+function selectEndpoint(key) {
+  currentEp = key;
+  document.querySelectorAll('.ep-item').forEach((el, idx) => {
+    el.classList.toggle('active', Object.keys(ENDPOINTS)[idx] === key);
+  });
+
+  const config = ENDPOINTS[key];
+  document.getElementById('ep-title').innerText = config.title;
+  document.getElementById('ep-desc').innerText = config.desc;
+
+  renderForm(config.params);
+  updateUrlDisplay();
+
+  // Reset media player if switching endpoints
+  document.getElementById('media-preview-container').style.display = 'none';
+  const player = document.getElementById('stream-player');
+  player.pause();
+  player.src = '';
+}
+
+function renderForm(params) {
+  const container = document.getElementById('form-container');
+  container.innerHTML = '';
+
+  if (!params || params.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-sub); font-size:0.9rem; grid-column:1/-1;">No required parameters for this endpoint.</div>';
+    return;
+  }
+
+  params.forEach(p => {
+    const group = document.createElement('div');
+    group.className = 'form-group';
+
+    const label = document.createElement('label');
+    label.innerText = p.label;
+    group.appendChild(label);
+
+    if (p.type === 'select') {
+      const select = document.createElement('select');
+      select.className = 'form-control';
+      select.id = `input-${p.name}`;
+      p.options.forEach(opt => {
+        const option = document.createElement('option');
+        option.value = opt;
+        option.innerText = opt;
+        if (opt === p.value) option.selected = true;
+        select.appendChild(option);
+      });
+      select.onchange = updateUrlDisplay;
+      group.appendChild(select);
+    } else {
+      const input = document.createElement('input');
+      input.className = 'form-control';
+      input.type = p.type;
+      input.id = `input-${p.name}`;
+      input.value = p.value;
+      input.oninput = updateUrlDisplay;
+      group.appendChild(input);
+    }
+
+    container.appendChild(group);
+  });
+}
+
+function buildRequestUrl() {
+  const config = ENDPOINTS[currentEp];
+  let path = config.path;
+  const queryParams = new URLSearchParams();
+
+  config.params.forEach(p => {
+    const el = document.getElementById(`input-${p.name}`);
+    const val = el ? el.value.trim() : p.value;
+
+    if (path.includes(`{${p.name}}`)) {
+      path = path.replace(`{${p.name}}`, encodeURIComponent(val));
+    } else if (val !== '') {
+      queryParams.append(p.name, val);
+    }
+  });
+
+  const qString = queryParams.toString();
+  return qString ? `${path}?${qString}` : path;
+}
+
+function updateUrlDisplay() {
+  document.getElementById('url-display').innerText = buildRequestUrl();
+}
+
+async function executeApi() {
+  const reqUrl = buildRequestUrl();
+  const output = document.getElementById('json-output');
+  const statusTag = document.getElementById('status-tag');
+  const timeTag = document.getElementById('time-tag');
+  const mediaContainer = document.getElementById('media-preview-container');
+  const player = document.getElementById('stream-player');
+
+  output.innerText = '// Fetching live response...';
+  statusTag.style.display = 'none';
+  timeTag.style.display = 'none';
+  mediaContainer.style.display = 'none';
+  player.pause();
+  player.src = '';
+
+  const startTime = performance.now();
+
+  try {
+    const res = await fetch(reqUrl);
+    const duration = Math.round(performance.now() - startTime);
+    const data = await res.json();
+    lastResponseData = data;
+
+    statusTag.innerText = `${res.status} ${res.statusText || 'OK'}`;
+    statusTag.className = `status-badge ${res.ok ? '' : 'error'}`;
+    statusTag.style.display = 'inline-block';
+
+    timeTag.innerText = `${duration}ms`;
+    timeTag.style.display = 'inline-block';
+
+    output.innerText = JSON.stringify(data, null, 2);
+
+    // Populate quick picker if items returned
+    if (data.items || (data.sections && data.sections[0])) {
+      extractQuickItems(data);
+    }
+
+    // Direct preview player if sources are present
+    if (currentEp === 'stream' && data.sources && data.sources.length > 0) {
+      const playable = data.sources.find(s => s.url);
+      if (playable) {
+        player.src = playable.url;
+        mediaContainer.style.display = 'block';
+      }
+    }
+  } catch (err) {
+    statusTag.innerText = 'FETCH ERROR';
+    statusTag.className = 'status-badge error';
+    statusTag.style.display = 'inline-block';
+    output.innerText = `// Request Failed: ${err.message}`;
+  }
+}
+
+function extractQuickItems(data) {
+  let items = [];
+  if (data.items) {
+    items = data.items;
+  } else if (data.sections) {
+    data.sections.forEach(s => {
+      if (s.items) items.push(...s.items);
+    });
+  }
+
+  items = items.filter(i => i.slug && i.subject_id).slice(0, 10);
+  if (items.length === 0) return;
+
+  const quickContainer = document.getElementById('quick-container');
+  const quickList = document.getElementById('quick-items-list');
+  quickList.innerHTML = '';
+
+  items.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'quick-card';
+    card.onclick = () => fillItemDetails(item.slug, item.subject_id);
+
+    const img = document.createElement('img');
+    img.src = item.poster_url || 'https://via.placeholder.com/100x150?text=No+Poster';
+    img.alt = item.name || 'Poster';
+    card.appendChild(img);
+
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.innerText = item.name || 'Untitled';
+    card.appendChild(title);
+
+    quickList.appendChild(card);
+  });
+
+  quickContainer.style.display = 'block';
+}
+
+function fillItemDetails(slug, subjectId) {
+  if (currentEp !== 'detail' && currentEp !== 'stream' && currentEp !== 'captions') {
+    selectEndpoint('detail');
+  }
+
+  setTimeout(() => {
+    const slugInput = document.getElementById('input-slug') || document.getElementById('input-detail_path');
+    const sidInput = document.getElementById('input-subject_id');
+
+    if (slugInput) slugInput.value = slug;
+    if (sidInput) sidInput.value = subjectId;
+
+    updateUrlDisplay();
+  }, 50);
+}
+
+function copyResponse() {
+  if (!lastResponseData) return;
+  navigator.clipboard.writeText(JSON.stringify(lastResponseData, null, 2));
+  alert('JSON Response copied to clipboard!');
+}
+
+function copyCurl() {
+  const fullUrl = window.location.origin + buildRequestUrl();
+  const curlCmd = `curl -X GET "${fullUrl}"`;
+  navigator.clipboard.writeText(curlCmd);
+  alert('cURL command copied to clipboard!');
+}
+
+// Initial setup
+selectEndpoint('home');
+</script>
 </body>
 </html>"""
 
