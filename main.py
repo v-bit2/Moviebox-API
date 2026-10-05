@@ -22,6 +22,7 @@ app.add_middleware(
 
 BASE_URL = "https://moviebox.ph"
 API_BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
+RAILWAY_BASE = "https://moviebox-api-production-1d6a.up.railway.app"
 
 _bearer_token: str | None = None
 _domain_cache: dict = {"value": None, "expires": 0.0}
@@ -459,6 +460,106 @@ async def get_download_links(
         "download_links": download_links,
         "hls": data.get("hls", []),
         "dash": data.get("dash", []),
+    }
+
+# ─── RAILWAY API ALIGNED ENDPOINTS ───────────────────────────────────────────
+
+@app.get("/api/homepage")
+async def get_railway_homepage():
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+        try:
+            resp = await client.get(f"{RAILWAY_BASE}/api/homepage")
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+    return await get_home()
+
+@app.get("/api/trending")
+async def get_railway_trending():
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+        try:
+            resp = await client.get(f"{RAILWAY_BASE}/api/trending")
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+    home_data = await get_home()
+    sections = home_data.get("sections", [])
+    trending_items = []
+    for s in sections:
+        if any(k in s.get("section", "").lower() for k in ["popular", "trending", "banner", "hot"]):
+            trending_items.extend(s.get("items", []))
+    return {"status": "success", "trending": trending_items[:30]}
+
+@app.get("/api/search/{query}")
+async def railway_search(query: str):
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+        try:
+            resp = await client.get(f"{RAILWAY_BASE}/api/search/{query}")
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+    return await search(q=query, page=1)
+
+@app.get("/api/info/{id}")
+async def railway_info(id: str, detailPath: str | None = None):
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+        try:
+            params = {"detailPath": detailPath} if detailPath else {}
+            resp = await client.get(f"{RAILWAY_BASE}/api/info/{id}", params=params)
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+    resolved_slug = await _resolve_detail_path(id, detailPath)
+    return await get_movie_detail(resolved_slug)
+
+@app.get("/api/sources/{id}")
+async def railway_sources(id: str, season: int = 1, episode: int = 1, detailPath: str | None = None):
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+        try:
+            params = {"season": season, "episode": episode}
+            if detailPath:
+                params["detailPath"] = detailPath
+            resp = await client.get(f"{RAILWAY_BASE}/api/sources/{id}", params=params)
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+    return await get_stream_sources(subject_id=id, detail_path=detailPath, se=season, ep=episode)
+
+@app.get("/api/sports")
+async def get_sports(category: str | None = None):
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+        try:
+            params = {"category": category} if category else {}
+            resp = await client.get(f"{RAILWAY_BASE}/api/sports", params=params)
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+    return {
+        "status": "success",
+        "category": category or "all",
+        "items": [],
+        "note": "Sports schedule feed."
+    }
+
+@app.get("/api/imgproxy")
+async def imgproxy(url: str = Query(...)):
+    async with httpx.AsyncClient(follow_redirects=True, timeout=15) as client:
+        try:
+            resp = await client.get(f"{RAILWAY_BASE}/api/imgproxy", params={"url": url})
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception:
+            pass
+    return {
+        "status": "success",
+        "original_url": url,
+        "proxy_url": url
     }
 
 # ─── HEALTH ───────────────────────────────────────────────────────────────────
@@ -1174,7 +1275,21 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
           </div>
           <span class="method-tag">GET</span>
         </div>
-        <div class="ep-item" onclick="selectEndpoint('health')">
+        <div class="ep-item" onclick="selectEndpoint('trending')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+            <span>Trending Feed</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('sports')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
+            <span>Sports Feed</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+                <div class="ep-item" onclick="selectEndpoint('health')">
           <div class="label-group">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
             <span>System Health</span>
@@ -1489,7 +1604,21 @@ const ENDPOINTS = {
       { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
     ]
   },
-  health: {
+  trending: {
+    title: 'Trending Feed',
+    desc: 'Retrieve top trending subjects and featured content.',
+    path: '/api/trending',
+    params: []
+  },
+  sports: {
+    title: 'Sports Events Feed',
+    desc: 'Retrieve live sports event schedules and stream metadata.',
+    path: '/api/sports',
+    params: [
+      { name: 'category', label: 'Category', type: 'text', value: 'football' }
+    ]
+  },
+    health: {
     title: 'System Health & Cache State',
     desc: 'Check API service liveness, guest token cache status, and player domain TTL.',
     path: '/health',
