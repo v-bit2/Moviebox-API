@@ -3,13 +3,15 @@ import re
 import json
 import time
 import httpx
+import yt_dlp
+import asyncio
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 app = FastAPI(
-    title="ViralBit Movie Apis",
-    description="Full Pure REST API for moviebox.ph — Zero Scraping",
+    title="ViralBit Multi-APIs Platform",
+    description="Universal Social Media & MovieBox Multi-API Platform created by DevDrey",
     version="2.2.0",
 )
 
@@ -156,6 +158,141 @@ def _build_player_referer(domain: str, detail_path: str, subject_id: str, se: in
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
     return HTMLResponse(content=DASHBOARD_HTML)
+
+
+# ─── UNIVERSAL MULTI-PLATFORM DOWNLOADER ENGINE (DevDrey) ───────────────────
+
+def extract_social_media(url: str, is_audio_only: bool = False, platform_hint: str = "auto") -> dict:
+    if not url or not url.strip():
+        return {
+            "status": "error",
+            "creator": "DevDrey",
+            "message": "Query parameter 'url' is required.",
+            "url": url
+        }
+
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'skip_download': True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                return {
+                    "status": "error",
+                    "creator": "DevDrey",
+                    "message": "Could not extract media info from provided URL.",
+                    "url": url
+                }
+
+            title = info.get('title') or 'Media Download'
+            thumbnail = info.get('thumbnail')
+            duration = info.get('duration')
+            uploader = info.get('uploader') or info.get('uploader_id') or info.get('channel') or 'DevDrey Platform'
+
+            downloads = []
+            formats = info.get('formats') or []
+
+            seen_urls = set()
+            for f in formats:
+                f_url = f.get('url')
+                if not f_url or f_url in seen_urls:
+                    continue
+                seen_urls.add(f_url)
+
+                ext = (f.get('ext') or 'mp4').upper()
+                height = f.get('height')
+                vcodec = f.get('vcodec')
+                acodec = f.get('acodec')
+
+                if is_audio_only and acodec == 'none':
+                    continue
+
+                quality = f"{height}p" if height else (f.get('format_note') or ('HD' if vcodec != 'none' else 'Audio'))
+                filesize = f.get('filesize') or f.get('filesize_approx')
+                size_str = f"{round(filesize / (1024 * 1024), 2)} MB" if filesize else "Direct Stream"
+
+                downloads.append({
+                    'quality': quality,
+                    'format': ext,
+                    'url': f_url,
+                    'size': size_str,
+                    'has_video': vcodec != 'none' and vcodec is not None,
+                    'has_audio': acodec != 'none' and acodec is not None,
+                })
+
+            if not downloads and info.get('url'):
+                downloads.append({
+                    'quality': 'Audio' if is_audio_only else 'HD Direct',
+                    'format': 'MP3' if is_audio_only else (info.get('ext') or 'MP4').upper(),
+                    'url': info.get('url'),
+                    'size': 'Direct Stream',
+                    'has_video': not is_audio_only,
+                    'has_audio': True
+                })
+
+            detected_platform = platform_hint if platform_hint != 'auto' else (info.get('extractor_key') or 'Social Media')
+
+            return {
+                'status': 'success',
+                'creator': 'DevDrey',
+                'platform': detected_platform,
+                'title': title,
+                'author': uploader,
+                'thumbnail': thumbnail,
+                'duration': duration,
+                'url': url,
+                'total_downloads': len(downloads),
+                'downloads': downloads[:12]
+            }
+    except Exception as e:
+        return {
+            'status': 'error',
+            'creator': 'DevDrey',
+            'platform': platform_hint,
+            'message': f"Extraction failed: {str(e)}",
+            'url': url
+        }
+
+@app.get("/api/downloader/all")
+async def download_all(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "Universal All-in-One")
+
+@app.get("/api/downloader/tiktok")
+async def download_tiktok(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "TikTok")
+
+@app.get("/api/downloader/youtube")
+async def download_youtube(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "YouTube")
+
+@app.get("/api/downloader/instagram")
+async def download_instagram(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "Instagram")
+
+@app.get("/api/downloader/facebook")
+async def download_facebook(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "Facebook")
+
+@app.get("/api/downloader/x")
+async def download_x(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "X (Twitter)")
+
+@app.get("/api/downloader/ytmp3")
+async def download_ytmp3(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, True, "YTMP3 Converter")
+
+@app.get("/api/downloader/pinterest")
+async def download_pinterest(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "Pinterest")
+
+@app.get("/api/downloader/threads")
+async def download_threads(url: str = Query(...)):
+    return await asyncio.to_thread(extract_social_media, url, False, "Threads")
+
 
 # ─── DISCOVERY ────────────────────────────────────────────────────────────────
 
@@ -580,21 +717,21 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ViralBit Movie Apis - Professional REST Portal & Documentation</title>
+<title>ViralBit Multi-APIs Platform &mdash; DevDrey</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg-dark: #070a12;
-  --bg-card: rgba(13, 20, 36, 0.75);
+  --bg-dark: #050811;
+  --bg-card: rgba(11, 18, 33, 0.85);
   --bg-input: #0a1122;
-  --border-color: rgba(0, 136, 255, 0.2);
+  --border-color: rgba(0, 136, 255, 0.22);
   --border-glow: rgba(0, 210, 255, 0.5);
   --primary-blue: #0088ff;
   --accent-cyan: #00d2ff;
-  --neon-glow: 0 0 20px rgba(0, 210, 255, 0.35);
+  --neon-glow: 0 0 25px rgba(0, 210, 255, 0.35);
   --text-main: #f0f4fc;
   --text-sub: #8ca2c0;
-  --code-bg: #050811;
+  --code-bg: #03060d;
   --success: #00e676;
   --error: #ff3366;
 }
@@ -606,9 +743,9 @@ body {
   color: var(--text-main);
   min-height: 100vh;
   background-image:
-    radial-gradient(circle at 15% 15%, rgba(0, 136, 255, 0.15) 0%, transparent 40%),
-    radial-gradient(circle at 85% 85%, rgba(0, 210, 255, 0.12) 0%, transparent 45%),
-    linear-gradient(to bottom, #05070d, #090e1a);
+    radial-gradient(circle at 15% 15%, rgba(0, 136, 255, 0.18) 0%, transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(0, 210, 255, 0.15) 0%, transparent 45%),
+    linear-gradient(to bottom, #03050a, #080d1a);
   background-attachment: fixed;
 }
 
@@ -627,9 +764,9 @@ header {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: rgba(0, 136, 255, 0.1);
+  background: rgba(0, 136, 255, 0.12);
   border: 1px solid rgba(0, 210, 255, 0.4);
-  padding: 6px 18px;
+  padding: 6px 20px;
   border-radius: 30px;
   color: var(--accent-cyan);
   font-size: 0.82rem;
@@ -637,7 +774,15 @@ header {
   text-transform: uppercase;
   letter-spacing: 1.5px;
   box-shadow: var(--neon-glow);
-  margin-bottom: 16px;
+  margin-bottom: 14px;
+}
+
+.creator-tag {
+  color: #fff;
+  font-weight: 800;
+  background: linear-gradient(90deg, #0088ff, #00d2ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 
 .brand-badge .pulse {
@@ -668,7 +813,7 @@ h1 {
 .subtitle {
   color: var(--text-sub);
   font-size: 1.05rem;
-  max-width: 650px;
+  max-width: 700px;
   margin: 0 auto 24px;
 }
 
@@ -681,7 +826,7 @@ h1 {
 }
 
 .tab-btn {
-  background: rgba(13, 20, 36, 0.6);
+  background: rgba(11, 18, 33, 0.7);
   border: 1px solid var(--border-color);
   color: var(--text-sub);
   padding: 10px 24px;
@@ -736,8 +881,8 @@ h1 {
   color: var(--text-sub);
   text-transform: uppercase;
   letter-spacing: 1.2px;
-  margin-bottom: 16px;
-  padding-left: 8px;
+  margin-bottom: 14px;
+  padding-left: 6px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -761,7 +906,7 @@ h1 {
   cursor: pointer;
   transition: all 0.25s ease;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 0.88rem;
 }
 
 .ep-item .label-group {
@@ -777,7 +922,7 @@ h1 {
 }
 
 .ep-item.active {
-  background: linear-gradient(90deg, rgba(0, 136, 255, 0.2) 0%, rgba(0, 210, 255, 0.05) 100%);
+  background: linear-gradient(90deg, rgba(0, 136, 255, 0.22) 0%, rgba(0, 210, 255, 0.05) 100%);
   border-color: var(--accent-cyan);
   box-shadow: inset 0 0 15px rgba(0, 210, 255, 0.15);
   color: #fff;
@@ -886,10 +1031,6 @@ h1 {
   box-shadow: var(--neon-glow);
 }
 
-select.form-control {
-  cursor: pointer;
-}
-
 .btn-submit {
   background: linear-gradient(135deg, var(--primary-blue) 0%, #00d2ff 100%);
   color: #030814;
@@ -912,6 +1053,77 @@ select.form-control {
   box-shadow: 0 12px 30px rgba(0, 210, 255, 0.5);
   color: #000;
 }
+
+/* MEDIA CARD DISPLAY */
+.media-preview-card {
+  margin-top: 24px;
+  background: rgba(5, 8, 17, 0.9);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (max-width: 650px) {
+  .media-preview-card { grid-template-columns: 1fr; }
+}
+
+.media-preview-card img {
+  width: 100%;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 210, 255, 0.3);
+}
+
+.media-meta h3 {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 6px;
+}
+
+.media-meta p {
+  color: var(--text-sub);
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+
+.download-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.dl-card {
+  background: rgba(0, 136, 255, 0.1);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  padding: 10px 14px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dl-card .quality { font-weight: 800; color: var(--accent-cyan); font-size: 0.9rem; }
+.dl-card .size { font-size: 0.75rem; color: var(--text-sub); }
+
+.dl-btn {
+  background: var(--primary-blue);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.8rem;
+  transition: all 0.2s;
+}
+
+.dl-btn:hover { background: var(--accent-cyan); color: #000; }
 
 /* RESPONSE BOX */
 .response-container {
@@ -985,101 +1197,6 @@ select.form-control {
 
 .code-wrapper pre { white-space: pre-wrap; word-break: break-all; }
 
-/* MEDIA PREVIEW & DOWNLOADS */
-.media-preview {
-  margin-top: 20px;
-  padding: 18px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid var(--border-color);
-  border-radius: 14px;
-}
-
-.media-preview video {
-  width: 100%;
-  max-height: 400px;
-  border-radius: 10px;
-  outline: none;
-  background: #000;
-}
-
-.download-options {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
-  margin-top: 12px;
-}
-
-.dl-card {
-  background: rgba(0, 136, 255, 0.1);
-  border: 1px solid rgba(0, 210, 255, 0.3);
-  padding: 12px 16px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.dl-card .quality { font-weight: 800; color: var(--accent-cyan); font-size: 1rem; }
-.dl-card .size { font-size: 0.8rem; color: var(--text-sub); }
-
-.dl-btn {
-  background: var(--primary-blue);
-  color: #fff;
-  padding: 6px 12px;
-  border-radius: 6px;
-  text-decoration: none;
-  font-weight: 700;
-  font-size: 0.8rem;
-  transition: all 0.2s;
-}
-
-.dl-btn:hover { background: var(--accent-cyan); color: #000; }
-
-/* QUICK ITEMS CAROUSEL/GRID */
-.quick-items {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
-  gap: 12px;
-  max-height: 320px;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-
-.quick-card {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 8px;
-  cursor: pointer;
-  transition: all 0.2s;
-  text-align: center;
-}
-
-.quick-card:hover {
-  border-color: var(--accent-cyan);
-  transform: translateY(-2px);
-  background: rgba(0, 136, 255, 0.1);
-}
-
-.quick-card img {
-  width: 100%;
-  aspect-ratio: 2/3;
-  object-fit: cover;
-  border-radius: 6px;
-  margin-bottom: 6px;
-  background: #0d1424;
-}
-
-.quick-card .title {
-  font-size: 0.75rem;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-main);
-}
-
 /* DOCUMENTATION TAB STYLING */
 .docs-view {
   background: var(--bg-card);
@@ -1116,7 +1233,7 @@ select.form-control {
 }
 
 .doc-endpoint-card {
-  background: rgba(5, 8, 17, 0.7);
+  background: rgba(3, 6, 13, 0.8);
   border: 1px solid var(--border-color);
   border-radius: 14px;
   padding: 20px;
@@ -1124,32 +1241,11 @@ select.form-control {
 }
 
 .doc-endpoint-card h3 {
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   margin-bottom: 8px;
   display: flex;
   align-items: center;
   gap: 12px;
-}
-
-.param-table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 14px;
-  font-size: 0.88rem;
-}
-
-.param-table th, .param-table td {
-  text-align: left;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.param-table th {
-  color: var(--accent-cyan);
-  font-weight: 700;
-  text-transform: uppercase;
-  font-size: 0.75rem;
-  letter-spacing: 1px;
 }
 
 .code-snippet {
@@ -1179,20 +1275,22 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
 <body>
 <div class="wrapper">
   <header>
-    <div class="brand-badge"><span class="pulse"></span> Official API Platform</div>
-    <h1>ViralBit Movie Apis</h1>
-    <p class="subtitle">High-performance REST API console and integration guide for MovieBox catalogs, streams, captions, and downloads.</p>
+    <div class="brand-badge">
+      <span class="pulse"></span> Universal Multi-APIs Platform &mdash; Created by <span class="creator-tag">&nbsp;DevDrey</span>
+    </div>
+    <h1>ViralBit Multi-APIs Platform</h1>
+    <p class="subtitle">High-speed media downloader APIs for TikTok, YouTube, Instagram, Facebook, X, YTMP3, Pinterest, Threads, and MovieBox.</p>
   </header>
 
   <!-- VIEW SWITCHER TABS -->
   <div class="main-tabs">
     <button id="tab-console-btn" class="tab-btn active" onclick="switchView('console')">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-      API Testing Console
+      Interactive Testing Console
     </button>
     <button id="tab-docs-btn" class="tab-btn" onclick="switchView('docs')">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
-      API Documentation & Integration Guide
+      API Docs & Integration Guide
     </button>
   </div>
 
@@ -1202,97 +1300,86 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
     <div class="nav-card">
       <div class="nav-title">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
-        API Endpoints
+        Media Downloader APIs
       </div>
       <div class="endpoint-list">
-        <div class="ep-item active" onclick="selectEndpoint('home')">
+        <div class="ep-item active" onclick="selectEndpoint('dl_all')">
           <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
+            <span>All-In-One Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_tiktok')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5"></path></svg>
+            <span>TikTok Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_youtube')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 11.75a29 29 0 0 0 .46 5.33A2.78 2.78 0 0 0 3.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2 29 29 0 0 0 .46-5.25 29 29 0 0 0-.46-5.33z"></path><polygon points="9.75 15.02 15.5 11.75 9.75 8.48 9.75 15.02"></polygon></svg>
+            <span>YouTube Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_instagram')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+            <span>Instagram Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_facebook')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"></path></svg>
+            <span>Facebook Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_x')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 3a10.9 10.9 0 0 1-3.14 1.53 4.48 4.48 0 0 0-7.86 3v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.5 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z"></path></svg>
+            <span>X / Twitter Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_ytmp3')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></svg>
+            <span>YTMP3 Audio Extractor</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_pinterest')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+            <span>Pinterest Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('dl_threads')">
+          <div class="label-group">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <span>Threads Downloader</span>
+          </div>
+          <span class="method-tag">GET</span>
+        </div>
+
+        <div class="nav-title" style="margin-top:16px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line></svg>
+          MovieBox APIs
+        </div>
+        <div class="ep-item" onclick="selectEndpoint('home')">
+          <div class="label-group">
             <span>Home Feed</span>
           </div>
           <span class="method-tag">GET</span>
         </div>
         <div class="ep-item" onclick="selectEndpoint('movies')">
           <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line></svg>
             <span>Movies Catalog</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('tv')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"></rect><polyline points="17 2 12 7 7 2"></polyline></svg>
-            <span>TV Series</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('animation')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>
-            <span>Animation</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('search')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-            <span>Full Search</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('suggest')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"></path></svg>
-            <span>Autocomplete</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('detail')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-            <span>Metadata Detail</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('stream')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-            <span>Stream Sources</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('download')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-            <span>Direct Download</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('captions')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-            <span>Captions / Subs</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('trending')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
-            <span>Trending Feed</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-        <div class="ep-item" onclick="selectEndpoint('sports')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"></path><path d="M2 12h20"></path></svg>
-            <span>Sports Feed</span>
-          </div>
-          <span class="method-tag">GET</span>
-        </div>
-                <div class="ep-item" onclick="selectEndpoint('health')">
-          <div class="label-group">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
-            <span>System Health</span>
           </div>
           <span class="method-tag">GET</span>
         </div>
@@ -1303,11 +1390,8 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
     <div class="console-card">
       <div class="console-header">
         <div class="endpoint-info">
-          <h2 id="ep-title">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
-            Discover Home Feed
-          </h2>
-          <p id="ep-desc">Retrieve real-time banners, top trending blocks, and curated categories.</p>
+          <h2 id="ep-title">Universal All-In-One Media Downloader</h2>
+          <p id="ep-desc">Pass any social media video or audio URL (TikTok, YouTube, IG, FB, X, Pinterest, Threads) to extract direct download links.</p>
         </div>
         <button class="btn-submit" onclick="executeApi()">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
@@ -1317,37 +1401,20 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
 
       <div class="url-bar">
         <span class="method-tag">GET</span>
-        <span class="url-path" id="url-display">/home</span>
+        <span class="url-path" id="url-display">/api/downloader/all</span>
       </div>
 
       <!-- DYNAMIC INPUT FORM -->
       <div id="form-container" class="form-grid"></div>
 
-      <!-- QUICK SELECTOR ITEMS -->
-      <div id="quick-container" style="display:none;">
-        <div class="nav-title" style="padding-left:0; margin-bottom:8px;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
-          Quick Select Item (Click to Auto-fill)
+      <!-- MEDIA CARD DISPLAY -->
+      <div id="media-card-container" style="display:none;" class="media-preview-card">
+        <img id="media-thumb" src="" alt="Thumbnail" />
+        <div class="media-meta">
+          <h3 id="media-title">Title</h3>
+          <p id="media-author">Author</p>
+          <div class="download-options" id="media-dl-options"></div>
         </div>
-        <div class="quick-items" id="quick-items-list"></div>
-      </div>
-
-      <!-- MEDIA PLAYER PREVIEW FOR STREAMS -->
-      <div id="media-preview-container" class="media-preview" style="display:none;">
-        <div class="nav-title" style="padding-left:0; margin-bottom:10px; color: var(--accent-cyan);">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-          Direct Video Stream Preview
-        </div>
-        <video id="stream-player" controls preload="metadata"></video>
-      </div>
-
-      <!-- DOWNLOAD OPTIONS PREVIEW -->
-      <div id="download-container" class="media-preview" style="display:none;">
-        <div class="nav-title" style="padding-left:0; margin-bottom:10px; color: var(--accent-cyan);">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-          High-Speed Direct Download Links
-        </div>
-        <div class="download-options" id="dl-cards-list"></div>
       </div>
 
       <!-- RESPONSE CONTAINER -->
@@ -1374,7 +1441,7 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
         </div>
 
         <div class="code-wrapper">
-          <pre id="json-output">// Click "Execute Request" above to test this endpoint live.</pre>
+          <pre id="json-output">// Click "Execute Request" above to test live.</pre>
         </div>
       </div>
     </div>
@@ -1383,246 +1450,109 @@ footer span { color: var(--accent-cyan); font-weight: 700; }
   <!-- DOCUMENTATION VIEW -->
   <div id="view-docs" class="docs-view" style="display:none;">
     <div class="docs-section">
-      <h2>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
-        Overview & Integration
-      </h2>
-      <p>Welcome to <strong>ViralBit Movie Apis</strong>. This platform provides an ultra-fast REST API interface for movie and TV series discovery, full-text search, direct stream link resolution, subtitles, and high-speed MP4 video downloads.</p>
-      <p>No client-side API keys or reverse-engineering needed. All requests run with seamless guest session handling and automated player domain resolution.</p>
+      <h2>Universal Multi-APIs Platform</h2>
+      <p>Created by <strong>DevDrey</strong>. This platform offers multi-platform media downloader APIs for TikTok, YouTube, Instagram, Facebook, X (Twitter), YTMP3, Pinterest, and Threads, as well as full MovieBox feeds and search.</p>
+      <p>All endpoints return structured JSON metadata stamped with <code>"creator": "DevDrey"</code>.</p>
     </div>
 
     <div class="docs-section">
-      <h2>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>
-        Authentication & Session Handling
-      </h2>
-      <p>The API handles authentication transparently. On the first request, a temporary guest session token is acquired from the upstream server and refreshed automatically. You can call all endpoints without setting any Authorization headers.</p>
-    </div>
-
-    <div class="docs-section">
-      <h2>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line></svg>
-        Endpoint Reference Catalog
-      </h2>
-
-      <!-- HOME FEED -->
+      <h2>Media Downloader Endpoints</h2>
       <div class="doc-endpoint-card">
-        <h3><span class="method-tag">GET</span> <code>/home</code></h3>
-        <p>Fetches real-time banners, top trending rows, and curated category lists from the home feed.</p>
-        <div class="code-snippet">curl "http://localhost:8000/home"</div>
+        <h3><span class="method-tag">GET</span> <code>/api/downloader/all?url={url}</code></h3>
+        <p>Auto-detects the platform and returns extracted media download links.</p>
+        <div class="code-snippet">curl "http://localhost:8000/api/downloader/all?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ"</div>
       </div>
-
-      <!-- CATALOGS -->
       <div class="doc-endpoint-card">
-        <h3><span class="method-tag">GET</span> <code>/movies</code>, <code>/tv-series</code>, <code>/animation</code></h3>
-        <p>Returns paginated catalog lists with poster artwork, titles, year, ratings, and IDs.</p>
-        <table class="param-table">
-          <thead>
-            <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>page</code></td><td>int</td><td>1</td><td>Page index (1-based)</td></tr>
-            <tr><td><code>sort</code></td><td>string</td><td>RECOMMEND</td><td>Sort mode: RECOMMEND, NEWEST, RATING</td></tr>
-          </tbody>
-        </table>
-        <div class="code-snippet">curl "http://localhost:8000/movies?page=1&sort=NEWEST"</div>
+        <h3><span class="method-tag">GET</span> <code>/api/downloader/tiktok?url={url}</code></h3>
+        <p>Extracts TikTok videos and audio tracks without watermarks.</p>
+        <div class="code-snippet">curl "http://localhost:8000/api/downloader/tiktok?url={tiktok_url}"</div>
       </div>
-
-      <!-- SEARCH -->
       <div class="doc-endpoint-card">
-        <h3><span class="method-tag">GET</span> <code>/search</code></h3>
-        <p>Full-text movie and series search with robust item normalization.</p>
-        <table class="param-table">
-          <thead>
-            <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>q</code></td><td>string</td><td>Yes</td><td>Search query string</td></tr>
-            <tr><td><code>page</code></td><td>int</td><td>No (1)</td><td>Page index</td></tr>
-          </tbody>
-        </table>
-        <div class="code-snippet">curl "http://localhost:8000/search?q=avatar"</div>
+        <h3><span class="method-tag">GET</span> <code>/api/downloader/ytmp3?url={url}</code></h3>
+        <p>Converts YouTube video or audio link directly into MP3 stream downloads.</p>
+        <div class="code-snippet">curl "http://localhost:8000/api/downloader/ytmp3?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ"</div>
       </div>
-
-      <!-- STREAM -->
-      <div class="doc-endpoint-card">
-        <h3><span class="method-tag">GET</span> <code>/api/stream/{subject_id}</code></h3>
-        <p>Resolves playable direct MP4 video URLs across 360p, 480p, 720p, and 1080p resolutions.</p>
-        <table class="param-table">
-          <thead>
-            <tr><th>Parameter</th><th>Type</th><th>Required</th><th>Description</th></tr>
-          </thead>
-          <tbody>
-            <tr><td><code>subject_id</code></td><td>string</td><td>Yes</td><td>Unique media ID</td></tr>
-            <tr><td><code>detail_path</code></td><td>string</td><td>No</td><td>Slug (Auto-resolved if omitted)</td></tr>
-            <tr><td><code>se</code></td><td>int</td><td>No (1)</td><td>Season number</td></tr>
-            <tr><td><code>ep</code></td><td>int</td><td>No (1)</td><td>Episode number</td></tr>
-          </tbody>
-        </table>
-        <div class="code-snippet">curl "http://localhost:8000/api/stream/3148392746424091800?se=1&ep=1"</div>
-      </div>
-
-      <!-- DOWNLOAD -->
-      <div class="doc-endpoint-card">
-        <h3><span class="method-tag">GET</span> <code>/api/download/{subject_id}</code></h3>
-        <p>Generates direct download links with calculated file sizes (MB), clean filenames, and duration info.</p>
-        <div class="code-snippet">curl "http://localhost:8000/api/download/3148392746424091800"</div>
-      </div>
-
-      <!-- CAPTIONS -->
-      <div class="doc-endpoint-card">
-        <h3><span class="method-tag">GET</span> <code>/api/stream/{subject_id}/captions</code></h3>
-        <p>Returns available SRT/VTT subtitle tracks for the selected movie or episode.</p>
-        <div class="code-snippet">curl "http://localhost:8000/api/stream/3148392746424091800/captions"</div>
-      </div>
-    </div>
-
-    <div class="docs-section">
-      <h2>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
-        Code Integration Examples
-      </h2>
-      <p><strong>Python (Async with httpx)</strong></p>
-      <div class="code-snippet">import httpx, asyncio
-
-async def fetch_movie_streams(subject_id):
-    async with httpx.AsyncClient() as client:
-        res = await client.get(f"http://localhost:8000/api/stream/{subject_id}")
-        return res.json()
-
-data = asyncio.run(fetch_movie_streams("3148392746424091800"))
-print("Sources:", data["sources"])</div>
-
-      <p style="margin-top:16px;"><strong>JavaScript (Node / Browser fetch)</strong></p>
-      <div class="code-snippet">async function downloadMovie(subjectId) {
-  const response = await fetch(`http://localhost:8000/api/download/${subjectId}`);
-  const data = await response.json();
-  console.log("Download Links:", data.download_links);
-}
-downloadMovie("3148392746424091800");</div>
     </div>
   </div>
 
   <footer>
-    Powering Next-Gen Media Discovery &mdash; <span>ViralBit Movie Apis</span>
+    ViralBit Multi-APIs Platform &mdash; Created with precision by <span>DevDrey</span>
   </footer>
 </div>
 
 <script>
-let currentEp = 'home';
+let currentEp = 'dl_all';
 let lastResponseData = null;
 
 const ENDPOINTS = {
+  dl_all: {
+    title: 'Universal All-In-One Downloader',
+    desc: 'Pass any video/audio URL across supported platforms to extract download links.',
+    path: '/api/downloader/all',
+    params: [{ name: 'url', label: 'Media URL', type: 'text', value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }]
+  },
+  dl_tiktok: {
+    title: 'TikTok Video & Audio Downloader',
+    desc: 'Extract watermark-free TikTok video streams and audio.',
+    path: '/api/downloader/tiktok',
+    params: [{ name: 'url', label: 'TikTok Post URL', type: 'text', value: 'https://www.tiktok.com/@tiktok/video/7123456789' }]
+  },
+  dl_youtube: {
+    title: 'YouTube Video Downloader',
+    desc: 'Extract YouTube MP4 streams across 360p, 480p, 720p, 1080p, 4K.',
+    path: '/api/downloader/youtube',
+    params: [{ name: 'url', label: 'YouTube Video URL', type: 'text', value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }]
+  },
+  dl_instagram: {
+    title: 'Instagram Reels & Video Downloader',
+    desc: 'Download Instagram Reels, IGTV, and posts directly.',
+    path: '/api/downloader/instagram',
+    params: [{ name: 'url', label: 'Instagram Post/Reel URL', type: 'text', value: 'https://www.instagram.com/reel/C123456789/' }]
+  },
+  dl_facebook: {
+    title: 'Facebook Video Downloader',
+    desc: 'Extract HD/SD video downloads from public Facebook posts.',
+    path: '/api/downloader/facebook',
+    params: [{ name: 'url', label: 'Facebook Video URL', type: 'text', value: 'https://www.facebook.com/watch/?v=123456789' }]
+  },
+  dl_x: {
+    title: 'X / Twitter Video Downloader',
+    desc: 'Extract video and GIF media files from X / Twitter posts.',
+    path: '/api/downloader/x',
+    params: [{ name: 'url', label: 'X Post URL', type: 'text', value: 'https://x.com/username/status/123456789' }]
+  },
+  dl_ytmp3: {
+    title: 'YTMP3 Audio Extractor',
+    desc: 'Convert YouTube videos directly to MP3 audio stream links.',
+    path: '/api/downloader/ytmp3',
+    params: [{ name: 'url', label: 'YouTube URL', type: 'text', value: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ' }]
+  },
+  dl_pinterest: {
+    title: 'Pinterest Media Downloader',
+    desc: 'Download pins, videos, and images from Pinterest.',
+    path: '/api/downloader/pinterest',
+    params: [{ name: 'url', label: 'Pinterest Pin URL', type: 'text', value: 'https://www.pinterest.com/pin/123456789/' }]
+  },
+  dl_threads: {
+    title: 'Threads Media Downloader',
+    desc: 'Download Threads video posts and media files.',
+    path: '/api/downloader/threads',
+    params: [{ name: 'url', label: 'Threads Post URL', type: 'text', value: 'https://www.threads.net/@username/post/123456789' }]
+  },
   home: {
-    title: 'Discover Home Feed',
-    desc: 'Retrieve real-time banners, top trending blocks, and curated categories.',
+    title: 'MovieBox Home Feed',
+    desc: 'Retrieve real-time movie & TV show banners and curated blocks.',
     path: '/home',
     params: []
   },
   movies: {
-    title: 'Movie Catalog',
+    title: 'MovieBox Movie Catalog',
     desc: 'Browse paginated catalog for movies with sorting support.',
     path: '/movies',
     params: [
       { name: 'page', label: 'Page Number', type: 'number', value: '1' },
       { name: 'sort', label: 'Sort By', type: 'select', value: 'RECOMMEND', options: ['RECOMMEND', 'NEWEST', 'RATING'] }
     ]
-  },
-  tv: {
-    title: 'TV Series Catalog',
-    desc: 'Browse paginated catalog for TV shows.',
-    path: '/tv-series',
-    params: [
-      { name: 'page', label: 'Page Number', type: 'number', value: '1' },
-      { name: 'sort', label: 'Sort By', type: 'select', value: 'RECOMMEND', options: ['RECOMMEND', 'NEWEST', 'RATING'] }
-    ]
-  },
-  animation: {
-    title: 'Animation Catalog',
-    desc: 'Browse paginated catalog for animated series and movies.',
-    path: '/animation',
-    params: [
-      { name: 'page', label: 'Page Number', type: 'number', value: '1' },
-      { name: 'sort', label: 'Sort By', type: 'select', value: 'RECOMMEND', options: ['RECOMMEND', 'NEWEST', 'RATING'] }
-    ]
-  },
-  search: {
-    title: 'Full-Text Search',
-    desc: 'High-precision search returning matching titles, slugs, and poster URLs.',
-    path: '/search',
-    params: [
-      { name: 'q', label: 'Search Query', type: 'text', value: 'avatar' },
-      { name: 'page', label: 'Page Number', type: 'number', value: '1' }
-    ]
-  },
-  suggest: {
-    title: 'Autocomplete Suggestions',
-    desc: 'Fast light-weight type-ahead search suggestions.',
-    path: '/search/suggest',
-    params: [
-      { name: 'q', label: 'Keyword', type: 'text', value: 'break' }
-    ]
-  },
-  detail: {
-    title: 'Full Metadata Tree',
-    desc: 'Deep metadata inspection for seasons, episodes, languages, and artwork.',
-    path: '/detail/{slug}',
-    params: [
-      { name: 'slug', label: 'Subject Slug', type: 'text', value: 'coven-academy-UQietRFFzK3' }
-    ]
-  },
-  stream: {
-    title: 'Stream Source Resolver',
-    desc: 'Extract direct MP4 video URLs, HLS/DASH links across resolutions.',
-    path: '/api/stream/{subject_id}',
-    params: [
-      { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
-      { name: 'detail_path', label: 'Detail Path / Slug (Optional)', type: 'text', value: '' },
-      { name: 'se', label: 'Season Number', type: 'number', value: '1' },
-      { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
-    ]
-  },
-  download: {
-    title: 'Direct High-Speed Download Links',
-    desc: 'Generate direct MP4 download links with size calculation and filenames.',
-    path: '/api/download/{subject_id}',
-    params: [
-      { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
-      { name: 'detail_path', label: 'Detail Path / Slug (Optional)', type: 'text', value: '' },
-      { name: 'se', label: 'Season Number', type: 'number', value: '1' },
-      { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
-    ]
-  },
-  captions: {
-    title: 'Subtitle & Captions',
-    desc: 'Fetch full caption track list in SRT/VTT for specific episode.',
-    path: '/api/stream/{subject_id}/captions',
-    params: [
-      { name: 'subject_id', label: 'Subject ID', type: 'text', value: '3148392746424091800' },
-      { name: 'detail_path', label: 'Detail Path / Slug (Optional)', type: 'text', value: '' },
-      { name: 'se', label: 'Season Number', type: 'number', value: '1' },
-      { name: 'ep', label: 'Episode Number', type: 'number', value: '1' }
-    ]
-  },
-  trending: {
-    title: 'Trending Feed',
-    desc: 'Retrieve top trending subjects and featured content.',
-    path: '/api/trending',
-    params: []
-  },
-  sports: {
-    title: 'Sports Events Feed',
-    desc: 'Retrieve live sports event schedules and stream metadata.',
-    path: '/api/sports',
-    params: [
-      { name: 'category', label: 'Category', type: 'text', value: 'football' }
-    ]
-  },
-    health: {
-    title: 'System Health & Cache State',
-    desc: 'Check API service liveness, guest token cache status, and player domain TTL.',
-    path: '/health',
-    params: []
   }
 };
 
@@ -1645,13 +1575,7 @@ function selectEndpoint(key) {
 
   renderForm(config.params);
   updateUrlDisplay();
-
-  // Reset previews
-  document.getElementById('media-preview-container').style.display = 'none';
-  document.getElementById('download-container').style.display = 'none';
-  const player = document.getElementById('stream-player');
-  player.pause();
-  player.src = '';
+  document.getElementById('media-card-container').style.display = 'none';
 }
 
 function renderForm(params) {
@@ -1727,17 +1651,12 @@ async function executeApi() {
   const output = document.getElementById('json-output');
   const statusTag = document.getElementById('status-tag');
   const timeTag = document.getElementById('time-tag');
-  const mediaContainer = document.getElementById('media-preview-container');
-  const dlContainer = document.getElementById('download-container');
-  const player = document.getElementById('stream-player');
+  const mediaCard = document.getElementById('media-card-container');
 
   output.innerText = '// Fetching live response...';
   statusTag.style.display = 'none';
   timeTag.style.display = 'none';
-  mediaContainer.style.display = 'none';
-  dlContainer.style.display = 'none';
-  player.pause();
-  player.src = '';
+  mediaCard.style.display = 'none';
 
   const startTime = performance.now();
 
@@ -1756,23 +1675,28 @@ async function executeApi() {
 
     output.innerText = JSON.stringify(data, null, 2);
 
-    // Populate quick picker
-    if (data.items || (data.sections && data.sections[0])) {
-      extractQuickItems(data);
-    }
+    if (data.status === 'success' && data.downloads && data.downloads.length > 0) {
+      document.getElementById('media-title').innerText = data.title || 'Extracted Media';
+      document.getElementById('media-author').innerText = `Author: ${data.author || 'Platform Media'} | Creator: ${data.creator || 'DevDrey'}`;
+      document.getElementById('media-thumb').src = data.thumbnail || 'https://via.placeholder.com/300x180?text=Media+Thumbnail';
 
-    // Video preview for stream
-    if (currentEp === 'stream' && data.sources && data.sources.length > 0) {
-      const playable = data.sources.find(s => s.url);
-      if (playable) {
-        player.src = playable.url;
-        mediaContainer.style.display = 'block';
-      }
-    }
+      const dlContainer = document.getElementById('media-dl-options');
+      dlContainer.innerHTML = '';
 
-    // Download cards for download endpoint
-    if (currentEp === 'download' && data.download_links && data.download_links.length > 0) {
-      renderDownloadCards(data.download_links);
+      data.downloads.forEach(dl => {
+        const item = document.createElement('div');
+        item.className = 'dl-card';
+        item.innerHTML = `
+          <div>
+            <div class="quality">${dl.quality} (${dl.format})</div>
+            <div class="size">${dl.size}</div>
+          </div>
+          <a href="${dl.url}" target="_blank" download class="dl-btn">Download</a>
+        `;
+        dlContainer.appendChild(item);
+      });
+
+      mediaCard.style.display = 'grid';
     }
   } catch (err) {
     statusTag.innerText = 'FETCH ERROR';
@@ -1780,81 +1704,6 @@ async function executeApi() {
     statusTag.style.display = 'inline-block';
     output.innerText = `// Request Failed: ${err.message}`;
   }
-}
-
-function renderDownloadCards(links) {
-  const container = document.getElementById('dl-cards-list');
-  const dlContainer = document.getElementById('download-container');
-  container.innerHTML = '';
-
-  links.forEach(item => {
-    const card = document.createElement('div');
-    card.className = 'dl-card';
-    card.innerHTML = `
-      <div>
-        <div class="quality">${item.quality} MP4</div>
-        <div class="size">${item.size}</div>
-      </div>
-      <a href="${item.url}" target="_blank" download="${item.filename}" class="dl-btn">Download</a>
-    `;
-    container.appendChild(card);
-  });
-
-  dlContainer.style.display = 'block';
-}
-
-function extractQuickItems(data) {
-  let items = [];
-  if (data.items) {
-    items = data.items;
-  } else if (data.sections) {
-    data.sections.forEach(s => {
-      if (s.items) items.push(...s.items);
-    });
-  }
-
-  items = items.filter(i => i.slug && i.subject_id).slice(0, 10);
-  if (items.length === 0) return;
-
-  const quickContainer = document.getElementById('quick-container');
-  const quickList = document.getElementById('quick-items-list');
-  quickList.innerHTML = '';
-
-  items.forEach(item => {
-    const card = document.createElement('div');
-    card.className = 'quick-card';
-    card.onclick = () => fillItemDetails(item.slug, item.subject_id);
-
-    const img = document.createElement('img');
-    img.src = item.poster_url || 'https://via.placeholder.com/100x150?text=No+Poster';
-    img.alt = item.name || 'Poster';
-    card.appendChild(img);
-
-    const title = document.createElement('div');
-    title.className = 'title';
-    title.innerText = item.name || 'Untitled';
-    card.appendChild(title);
-
-    quickList.appendChild(card);
-  });
-
-  quickContainer.style.display = 'block';
-}
-
-function fillItemDetails(slug, subjectId) {
-  if (currentEp !== 'detail' && currentEp !== 'stream' && currentEp !== 'download' && currentEp !== 'captions') {
-    selectEndpoint('detail');
-  }
-
-  setTimeout(() => {
-    const slugInput = document.getElementById('input-slug') || document.getElementById('input-detail_path');
-    const sidInput = document.getElementById('input-subject_id');
-
-    if (slugInput) slugInput.value = slug;
-    if (sidInput) sidInput.value = subjectId;
-
-    updateUrlDisplay();
-  }, 50);
 }
 
 function copyResponse() {
@@ -1871,7 +1720,7 @@ function copyCurl() {
 }
 
 // Initial setup
-selectEndpoint('home');
+selectEndpoint('dl_all');
 </script>
 </body>
 </html>"""
